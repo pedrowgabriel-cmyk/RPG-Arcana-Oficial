@@ -342,3 +342,41 @@ export function calcularAjusteCorpo(
   partes.push(`(Vida ${hp}/${estado.maxHp} · Dor ${dor}/6)`);
   return { hp, dor, condicoes: final, texto: partes.join(" — ") };
 }
+
+/* ── Notas do jogador (characters.stats.notas) ── */
+
+export type CorNota = "papel" | "ouro" | "sangue" | "mato" | "ceu";
+
+export type Nota = {
+  id: string;
+  titulo: string;
+  texto: string;
+  cor: CorNota;
+  fixada: boolean;
+  atualizadaEm: string;
+};
+
+export function notasDe(c: Character): Nota[] {
+  const n = (c.stats as { notas?: unknown } | null)?.notas;
+  return Array.isArray(n) ? (n as Nota[]) : [];
+}
+
+/** Saneia notas vindas do cliente (limites de tamanho e quantidade). */
+export function sanearNotas(raw: unknown): Nota[] {
+  if (!Array.isArray(raw)) return [];
+  const cores: CorNota[] = ["papel", "ouro", "sangue", "mato", "ceu"];
+  return raw.slice(0, 200).flatMap((n) => {
+    const x = (n ?? {}) as Partial<Nota>;
+    if (typeof x.id !== "string" || !x.id) return [];
+    return [
+      {
+        id: x.id.slice(0, 64),
+        titulo: String(x.titulo ?? "").slice(0, 120),
+        texto: String(x.texto ?? "").slice(0, 20000),
+        cor: cores.includes(x.cor as CorNota) ? (x.cor as CorNota) : "papel",
+        fixada: x.fixada === true,
+        atualizadaEm: typeof x.atualizadaEm === "string" ? x.atualizadaEm : new Date().toISOString(),
+      },
+    ];
+  });
+}

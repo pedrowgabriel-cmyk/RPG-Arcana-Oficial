@@ -85,23 +85,36 @@ export const WEAVE_FIELDS = {
   segredos: ["titulo", "texto"],
 } as const satisfies Record<WovenListKey, readonly string[]>;
 
-export const WEAVE_SCHEMA = {
+const raiz = (props: Record<string, unknown>) => ({
   type: "object",
-  properties: {
+  properties: props,
+  required: Object.keys(props),
+  additionalProperties: false,
+});
+
+/**
+ * A campanha sai em ETAPAS: um schema único com tudo estoura o limite de
+ * gramática da API ("compiled grammar is too large"). A fundação vem primeiro;
+ * NPCs, cenas e tramas saem em paralelo, costurados nela.
+ */
+export const WEAVE_ETAPAS = {
+  fundacao: raiz({
     premissa: { type: "string" },
     objetivoDoBando: { type: "string" },
     arco: obj(["titulo", "texto"]),
     lugares: arr([...WEAVE_FIELDS.lugares]),
     faccoes: arr([...WEAVE_FIELDS.faccoes]),
-    npcs: arr([...WEAVE_FIELDS.npcs]),
-    cenas: arr([...WEAVE_FIELDS.cenas]),
+  }),
+  npcs: raiz({ npcs: arr([...WEAVE_FIELDS.npcs]) }),
+  cenas: raiz({ cenas: arr([...WEAVE_FIELDS.cenas]) }),
+  tramas: raiz({
     missoes: arr([...WEAVE_FIELDS.missoes]),
     calendario: arr([...WEAVE_FIELDS.calendario]),
     segredos: arr([...WEAVE_FIELDS.segredos]),
-  },
-  required: ["premissa", "objetivoDoBando", "arco", "lugares", "faccoes", "npcs", "cenas", "missoes", "calendario", "segredos"],
-  additionalProperties: false,
+  }),
 } as const;
+
+export type EtapaWeave = keyof typeof WEAVE_ETAPAS;
 
 const MAX_ITEMS = 20;
 const MAX_CHARS = 4000;

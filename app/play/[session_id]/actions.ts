@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { itemById, LOJAS, precoNaMesa } from "@/lib/character-creation/sacramento/catalogo";
 import { limitesComEconomia } from "@/lib/character-creation/sacramento/rules";
 import { economiaDaMesa, formatarReis } from "@/lib/rulesets/sacramento/economia";
-import { calcularAjusteCorpo, nomeCarta, rolar, type AjusteCorpo, type Rolagem, type TipoRolagem } from "@/lib/rulesets/sacramento/mesa";
+import { calcularAjusteCorpo, nomeCarta, rolar, sanearNotas, type AjusteCorpo, type Rolagem, type TipoRolagem } from "@/lib/rulesets/sacramento/mesa";
 import type { Carta } from "@/lib/rulesets/sacramento/types";
 
 type InventarioItem = {
@@ -233,4 +233,24 @@ export async function ajustarMeuCorpo(
     payload: { texto: `${r.texto} · registrado pelo jogador`, personagemId: characterId },
   });
   return { ok: true, texto: r.texto };
+}
+
+/** Grava SÓ as notas: relê a ficha e troca stats.notas, sem pisar em Vida/Dor/Sina do Juiz. */
+export async function salvarNotas(
+  sessionId: string,
+  characterId: string,
+  notas: unknown,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await meuPersonagem(sessionId, characterId);
+  if (!ctx) return { ok: false, error: "Personagem não encontrado nesta mesa." };
+  const { data: atual } = await ctx.supabase
+    .from("characters")
+    .select("stats")
+    .eq("id", characterId)
+    .single<{ stats: Record<string, unknown> | null }>();
+  const { error } = await ctx.supabase
+    .from("characters")
+    .update({ stats: { ...(atual?.stats ?? {}), notas: sanearNotas(notas) } })
+    .eq("id", characterId);
+  return error ? { ok: false, error: error.message } : { ok: true };
 }

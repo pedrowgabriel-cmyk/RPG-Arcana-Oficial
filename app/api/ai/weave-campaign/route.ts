@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase-server";
@@ -10,14 +9,21 @@ import type { ElementosHistoria, HistoriaEstruturada } from "@/lib/character-cre
 import { SACRAMENTO_THEMES, SACRAMENTO_TONES } from "@/lib/rulesets/sacramento/themes";
 import { SACRAMENTO_PLACES } from "@/lib/rulesets/sacramento/places";
 import { SACRAMENTO_FACTIONS } from "@/lib/rulesets/sacramento/factions";
-import { WEAVE_SCHEMA, sanitizeWoven } from "@/lib/rulesets/sacramento/weave";
+import { WEAVE_ETAPAS, sanitizeWoven, type EtapaWeave } from "@/lib/rulesets/sacramento/weave";
 import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 import { palavrasDoJogador } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 
-// A campanha inteira sai numa chamada só — pode levar alguns minutos.
+// Fundação + três etapas em paralelo — pode levar alguns minutos.
 export const maxDuration = 300;
 
-const MODEL = process.env.ANTHROPIC_CAMPAIGN_MODEL ?? "claude-opus-5";
+// GPT: a conta Anthropic ficou sem créditos e o resto da IA do app já roda na OpenAI.
+const MODEL = process.env.OPENAI_CAMPAIGN_MODEL ?? "gpt-5";
+
+class ErroIA extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
 const MAX_INSTRUCTION_CHARS = 2000;
 
 // Os dois documentos normativos entram inteiros no system prompt (com cache).
@@ -50,9 +56,30 @@ Regras invioláveis (Doc 02 §3.3):
 7. Lugares e facções canônicos: use o canonId da lista fornecida. Criações novas usam canonId "" e nunca alegam vir do livro.
 8. NPCs são participantes, não invulneráveis. Segredos e fatos verdadeiros ficam nos campos do Juiz.
 9. Respeite linhas e véus da sessão zero.
-10. Não repita elementos que a campanha já tem (lista fornecida) — complemente-os.
+10. TUDO que o Juiz já preencheu é verdade desta campanha: mantenha, respeite e costure nas propostas (cite esses lugares, facções, NPCs e cenas pelo nome). Nunca duplique nem contradiga — só complemente o que falta.
+11. A "Direção do Juiz" tem prioridade máxima sobre qualquer sugestão sua.
 
-Tamanho: 3–5 lugares, 2–3 facções, 6–10 NPCs, 4–6 cenas (em ordem de jogo, começando pela cena de abertura que reúne o bando), 3–5 missões, 2–4 eventos de calendário, 1 segredo por personagem (o gancho que o Juiz guarda para aquele PJ) + 1–3 segredos gerais. O campo "arco" é o resumo do arco da campanha em 3 atos, só para o Juiz. Campos sem conteúdo relevante ficam como string vazia. Escreva em português brasileiro, no tom do velho oeste mineiro, conciso e jogável.`;
+A campanha é montada em etapas: você recebe a etapa pedida e, a partir da segunda, a fundação já proposta — use exatamente os nomes dela. Campos sem conteúdo relevante ficam como string vazia. Escreva em português brasileiro, no tom do velho oeste mineiro, conciso e jogável.`;
+
+const PEDIDO_ETAPA: Record<EtapaWeave, string> = {
+  fundacao:
+    "ETAPA 1 — FUNDAÇÃO. Proponha premissa e objetivo do bando (se o Juiz já escreveu, refine sem contradizer), o arco da campanha em 3 atos (só para o Juiz), 3–5 lugares e 2–3 facções que ainda NÃO existem na campanha (canônicos pelo canonId ou criações novas).",
+  npcs:
+    "ETAPA 2 — NPCs. Proponha 6–10 NPCs novos, ligados à fundação, aos lugares/facções (existentes e novos) e ao passado, vínculos e redenção de cada personagem do bando.",
+  cenas:
+    "ETAPA 3 — CENAS. Proponha 4–6 cenas em ordem de jogo, começando pela cena de abertura que reúne o bando. Use os lugares e NPCs existentes e os da fundação; cada personagem precisa de ao menos uma cena ligada à sua história.",
+  tramas:
+    "ETAPA 4 — TRAMAS. Proponha 3–5 missões, 2–4 eventos de calendário e segredos do Juiz: 1 segredo por personagem do bando (o gancho que o Juiz guarda para aquele PJ) + 1–3 segredos gerais.",
+};
+
+/** Resume um elemento já criado pelo Juiz com seus campos preenchidos. */
+function detalheElemento(kind: string, data: Record<string, unknown>): string {
+  const titulo = String(data.nome ?? data.titulo ?? "(sem nome)");
+  const campos = Object.entries(data)
+    .filter(([k, v]) => !["nome", "titulo", "imagem", "emblema", "mapa", "paginas", "cartasGeradas", "canonId", "origem"].includes(k) && typeof v === "string" && v.trim())
+    .map(([k, v]) => `${k}: ${String(v).trim().slice(0, 400)}`);
+  return `- [${kind}] ${titulo}${campos.length ? ` — ${campos.join(" | ")}` : ""}`;
+}
 
 function resumoPersonagem(c: PartyCharacter, jogador: string): string {
   const story = (c.story ?? {}) as { historia?: HistoriaEstruturada; elementos?: ElementosHistoria };
@@ -148,26 +175,34 @@ export async function POST(request: Request) {
   );
 
   const campaign = (session.campaign ?? {}) as CampaignConfig;
-  const existentes = (elementsRes.data ?? []).map(
-    (el) => `${el.kind}: ${(el.data as { nome?: string; titulo?: string }).nome ?? (el.data as { titulo?: string }).titulo ?? ""}`,
-  );
+  const ROTULO_KIND: Record<string, string> = {
+    place: "lugar", faction: "facção", npc: "NPC", scene: "cena", mission: "missão", calendar_event: "calendário", secret_note: "segredo",
+  };
+  const existentes = (elementsRes.data ?? [])
+    .map((el) => detalheElemento(ROTULO_KIND[el.kind] ?? el.kind, (el.data ?? {}) as Record<string, unknown>))
+    .join("\n")
+    .slice(0, 30000);
   const temas = (campaign.themes ?? [])
     .map((id) => SACRAMENTO_THEMES.find((t) => t.id === id)?.nome ?? id)
     .join(", ");
   const tom = SACRAMENTO_TONES.find((t) => t.id === campaign.tone)?.nome;
   const economia = economiaDaMesa(session.settings);
+  const direcao = typeof instruction === "string" ? instruction.trim() : "";
 
-  const userPrompt = [
+  const contexto = [
     "## Campanha",
     `Título: ${session.title}`,
+    session.description && `Descrição do Juiz: ${session.description}`,
     campaign.premise && `Premissa atual do Juiz: ${campaign.premise}`,
     campaign.band_goal && `Objetivo do bando: ${campaign.band_goal}`,
     tom && `Tom: ${tom}`,
     temas && `Temas: ${temas}`,
     `Época: ${campaign.epoch ?? 1880}`,
-    `Economia da mesa (regra de mesa): ${economia.nome}, ×${economia.multiplicador} sobre os preços do livro — recompensas e valores propostos em réis devem já refletir esse multiplicador e dizer isso.`,
+    campaign.fictional_date && `Data ficcional: ${campaign.fictional_date}`,
+    `Economia da mesa (regra de mesa): ${economia.nome}, ×${economia.multiplicador} sobre os preços do livro — recompensas e valores em réis devem refletir esse multiplicador e dizer isso.`,
     (campaign.session_zero?.lines?.length ?? 0) > 0 && `Linhas (proibido): ${campaign.session_zero!.lines!.join("; ")}`,
     (campaign.session_zero?.veils?.length ?? 0) > 0 && `Véus (só em segundo plano): ${campaign.session_zero!.veils!.join("; ")}`,
+    campaign.session_zero?.notes && `Notas da sessão zero: ${campaign.session_zero.notes}`,
     "",
     "## Lugares canônicos (canonId — nome: características)",
     ...SACRAMENTO_PLACES.map((p) => `${p.id} — ${p.nome}: ${p.caracteristicas}`),
@@ -175,15 +210,14 @@ export async function POST(request: Request) {
     "## Facções canônicas (canonId — nome: resumo)",
     ...SACRAMENTO_FACTIONS.map((f) => `${f.id} — ${f.nome}: ${f.resumo}`),
     "",
-    existentes.length > 0 ? `## Já existe na campanha\n${existentes.join("\n")}` : "## A campanha ainda não tem elementos.",
+    existentes
+      ? `## O que o Juiz JÁ preencheu nesta campanha (manter e costurar)\n${existentes}`
+      : "## A campanha ainda não tem elementos preenchidos.",
     "",
     "## O bando",
     ...chars.map((c) => resumoPersonagem(c, nomes.get(c.owner_id) ?? "jogador")),
     "",
-    typeof instruction === "string" && instruction.trim()
-      ? `## Direção do Juiz\n${instruction.trim()}`
-      : "",
-    "Proponha a campanha completa agora.",
+    direcao ? `## Direção do Juiz (prioridade máxima)\n${direcao}` : "",
   ]
     .filter((l) => l !== false && l !== undefined && l !== null)
     .join("\n");
@@ -194,7 +228,7 @@ export async function POST(request: Request) {
       session_id: sessionId,
       requested_by: auth.user.id,
       type: "gm_suggestion",
-      prompt: userPrompt.slice(0, 4000),
+      prompt: contexto.slice(0, 4000),
       model: MODEL,
       status: "pending",
     })
@@ -209,46 +243,78 @@ export async function POST(request: Request) {
       .eq("id", aiRequest.id);
   };
 
+  let tokens = 0;
   try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) throw new ErroIA(500, "OPENAI_API_KEY não configurada no servidor");
     const docs = await loadDocs();
-    const client = new Anthropic();
-    // Streaming: saída longa (campanha inteira) passa do limite de chamada síncrona do SDK.
-    const stream = client.messages.stream({
-      model: MODEL,
-      max_tokens: 32000,
-      thinking: { type: "adaptive" },
-      output_config: {
-        effort: "medium",
-        format: { type: "json_schema", schema: WEAVE_SCHEMA },
-      },
-      system: [
-        { type: "text", text: INSTRUCOES },
-        { type: "text", text: docs, cache_control: { type: "ephemeral" } },
-      ],
-      messages: [{ role: "user", content: userPrompt }],
-    });
-    const message = await stream.finalMessage();
-    const text = message.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    if (message.stop_reason === "max_tokens") throw new Error("Resposta cortada no limite de tamanho");
-    const proposal = sanitizeWoven(JSON.parse(text));
+    const system = `${INSTRUCOES}\n\n${docs}`;
+
+    const etapa = async (nome: EtapaWeave, fundacao?: unknown) => {
+      const conteudo = [
+        contexto,
+        fundacao ? `\n## Fundação já proposta (use estes nomes)\n${JSON.stringify(fundacao)}` : "",
+        `\n${PEDIDO_ETAPA[nome]}`,
+      ].join("\n");
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: conteudo },
+          ],
+          // Um schema por etapa: um único com a campanha inteira fica grande demais.
+          response_format: { type: "json_schema", json_schema: { name: `campanha_${nome}`, strict: true, schema: WEAVE_ETAPAS[nome] } },
+          max_completion_tokens: 24000,
+          ...(MODEL.startsWith("gpt-5") || MODEL.startsWith("o") ? { reasoning_effort: "low" } : {}),
+        }),
+        signal: AbortSignal.timeout(170000),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        choices?: { finish_reason?: string; message?: { content?: string; refusal?: string } }[];
+        usage?: { total_tokens?: number };
+        error?: { message?: string };
+      };
+      if (!res.ok) throw new ErroIA(res.status, json.error?.message ?? `HTTP ${res.status}`);
+      tokens += json.usage?.total_tokens ?? 0;
+      const choice = json.choices?.[0];
+      if (choice?.finish_reason === "length") throw new ErroIA(502, `Etapa ${nome} cortada no limite de tamanho`);
+      if (!choice?.message?.content) throw new ErroIA(502, choice?.message?.refusal ?? `Etapa ${nome} voltou vazia`);
+      return JSON.parse(choice.message.content) as Record<string, unknown>;
+    };
+
+    const fundacao = await etapa("fundacao");
+    const [npcs, cenas, tramas] = await Promise.all([
+      etapa("npcs", fundacao),
+      etapa("cenas", fundacao),
+      etapa("tramas", fundacao),
+    ]);
+    const proposal = sanitizeWoven({ ...fundacao, ...npcs, ...cenas, ...tramas });
 
     await finish({
       status: "completed",
-      response: text.slice(0, 20000),
-      tokens_used: (message.usage.input_tokens ?? 0) + (message.usage.output_tokens ?? 0),
+      response: JSON.stringify(proposal).slice(0, 20000),
+      tokens_used: tokens,
     });
     return NextResponse.json({ proposal });
   } catch (error) {
-    await finish({ status: "failed" });
+    await finish({ status: "failed", response: String((error as Error)?.message ?? error).slice(0, 2000) });
     console.error("[weave-campaign]", error);
-    if (error instanceof Anthropic.RateLimitError) {
-      return NextResponse.json({ error: "Limite de requisições atingido. Tente em instantes." }, { status: 429 });
+    if (error instanceof ErroIA) {
+      return NextResponse.json(
+        {
+          error:
+            error.status === 429
+              ? "Limite de uso da IA atingido. Tente de novo em 1 minuto."
+              : `Erro na chamada à IA (${error.status}): ${error.message.slice(0, 240)}`,
+        },
+        { status: error.status === 429 ? 429 : 502 },
+      );
     }
-    if (error instanceof Anthropic.APIError) {
-      return NextResponse.json({ error: "Erro na chamada à IA" }, { status: 502 });
+    if ((error as Error)?.name === "TimeoutError") {
+      return NextResponse.json({ error: "A IA demorou demais. Tente de novo." }, { status: 504 });
     }
     return NextResponse.json({ error: "A IA não conseguiu montar a campanha. Tente de novo." }, { status: 500 });
   }

@@ -22,12 +22,14 @@ import {
 } from "@/lib/rulesets/sacramento/mesa";
 import type { Character, Notification, Session, SessionEvent, SessionMediaState } from "@/lib/types";
 import { CartaMini, RetratoEstado, imagensDe, textoEvento } from "./pecas";
+import { NotasJogador } from "./NotasJogador";
 
-type Aba = "ficha" | "historia" | "rolar" | "alforje" | "armazem" | "mesa";
+type Aba = "ficha" | "historia" | "notas" | "rolar" | "alforje" | "armazem" | "mesa";
 
 const ABAS: { id: Aba; rotulo: string }[] = [
   { id: "ficha", rotulo: "Ficha" },
   { id: "historia", rotulo: "História" },
+  { id: "notas", rotulo: "📝 Notas" },
   { id: "rolar", rotulo: "🎲 Rolar" },
   { id: "alforje", rotulo: "Alforje" },
   { id: "armazem", rotulo: "Armazém" },
@@ -262,6 +264,7 @@ export function MesaDoJogador({
             <div className="pt-4">
               {aba === "ficha" && <FichaAba character={character} />}
               {aba === "historia" && <HistoriaAba character={character} story={story} />}
+              {aba === "notas" && <NotasJogador sessionId={session.id} character={character} />}
               {aba === "rolar" && <RolarAba sessionId={session.id} character={character} onRefresh={onRefresh} />}
               {aba === "alforje" && <AlforjeAba character={character} onArmazem={() => setAba("armazem")} />}
               {aba === "armazem" && <ArmazemDoJogo session={session} character={character} onDone={onRefresh} />}
