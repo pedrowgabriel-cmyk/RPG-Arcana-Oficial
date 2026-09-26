@@ -14,9 +14,9 @@ import type {
 } from "@/lib/character-creation/sacramento/types";
 import { baseId } from "@/lib/character-creation/sacramento/bases";
 import { characterImagePath } from "@/lib/character-creation/sacramento/kits";
-import { calcularDerivados, limitesDaMesa, validarFicha, XP_POR_NIVEL } from "@/lib/character-creation/sacramento/rules";
+import { calcularDerivados, limitesComEconomia, validarFicha, XP_POR_NIVEL } from "@/lib/character-creation/sacramento/rules";
 import { contarParrudeza } from "@/lib/character-creation/sacramento/habilidades";
-import { itemById, resumoCompras } from "@/lib/character-creation/sacramento/catalogo";
+import { itemById, precoNaMesa, resumoCompras } from "@/lib/character-creation/sacramento/catalogo";
 
 export type CreateSacramentoPayload = {
   name: string;
@@ -82,9 +82,7 @@ export async function createSacramentoCharacter(
   }
 
   // Regras da mesa lidas do banco — nunca do cliente.
-  const limites = limitesDaMesa(
-    (acesso.session.settings as { regrasCriacao?: unknown } | null)?.regrasCriacao,
-  );
+  const limites = limitesComEconomia(acesso.session.settings);
   const ficha = payload.ficha;
   const dinheiroInicial = limites.dinheiroInicial;
   const validacao = validarFicha(ficha, dinheiroInicial, limites);
@@ -94,7 +92,7 @@ export async function createSacramentoCharacter(
 
   const derivados = calcularDerivados(ficha, contarParrudeza(ficha.habilidades));
   const proximoNivel = Math.min(6, ficha.nivel + 1) as keyof typeof XP_POR_NIVEL;
-  const compras = resumoCompras(ficha.compras ?? [], dinheiroInicial);
+  const compras = resumoCompras(ficha.compras ?? [], dinheiroInicial, limites.multiplicadorPrecos);
   const inventario = (ficha.compras ?? [])
     .map((c) => {
       const item = itemById(c.id);
@@ -104,7 +102,7 @@ export async function createSacramentoCharacter(
             nome: item.nome,
             categoria: item.categoria,
             quantidade: c.quantidade,
-            precoPago: item.preco,
+            precoPago: precoNaMesa(item.preco, limites.multiplicadorPrecos),
             espaco: item.espaco,
           }
         : null;

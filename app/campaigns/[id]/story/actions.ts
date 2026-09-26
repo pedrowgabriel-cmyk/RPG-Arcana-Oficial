@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase-server";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { normalizeEmails } from "@/lib/campaign-invites";
 import { sanitizeWoven, wovenToElements } from "@/lib/rulesets/sacramento/weave";
+import { REGUA_ECONOMIA, economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 import type {
   CampaignConfig,
   CampaignElement,
@@ -289,4 +290,67 @@ export async function applyWovenCampaign(
 
   revalidatePath(`/campaigns/${sessionId}/story`);
   return { ok: true, elements, config };
+}
+
+// ─── Economia da mesa (regra de mesa: inflação) ───
+
+/**
+ * Muda a economia da campanha a qualquer momento — inclusive no meio da partida.
+ * Jogadores recebem o novo preço em tempo real (sessions está no realtime) e um aviso.
+ */
+export async function definirEconomia(
+  sessionId: string,
+  nivelId: string,
+): Promise<Ok<{ nivelId: string }>> {
+  const ctx = await requireGmOfSession(sessionId);
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+
+  const nivel = REGUA_ECONOMIA.find((n) => n.id === nivelId);
+  if (!nivel) return { ok: false, error: "Nível de economia inválido." };
+
+  const { data: sessao } = await ctx.supabase
+    .from("sessions")
+    .select("settings")
+    .eq("id", sessionId)
+    .single<{ settings: Record<string, unknown> | null }>();
+  const anterior = economiaDaMesa(sessao?.settings);
+  if (anterior.id === nivel.id) return { ok: true, nivelId: nivel.id };
+
+  const { error } = await ctx.supabase
+    .from("sessions")
+    .update({
+      settings: {
+        ...(sessao?.settings ?? {}),
+        economia: { nivelId: nivel.id, alteradaEm: new Date().toISOString() },
+      },
+    })
+    .eq("id", sessionId);
+  if (error) return { ok: false, error: error.message };
+
+  const subiu = nivel.multiplicador > anterior.multiplicador;
+  const titulo = `${nivel.emoji} Os preços ${subiu ? "subiram" : "caíram"}: ${nivel.nome}`;
+  const mensagem = `Tudo agora custa ×${nivel.multiplicador.toLocaleString("pt-BR")} do preço de tabela. "${nivel.fala}"`;
+  // Aviso aos jogadores (falha aqui não desfaz a mudança de economia).
+  await Promise.all([
+    ctx.supabase.from("notifications").insert({
+      session_id: sessionId,
+      target_id: null,
+      type: "info",
+      title: titulo,
+      message: mensagem,
+      vibrate: false,
+    }),
+    ctx.supabase.from("session_events").insert({
+      session_id: sessionId,
+      actor_id: ctx.userId,
+      type: "gm_note",
+      is_public: true,
+      payload: { tipo: "economia", nivelId: nivel.id, texto: `${titulo}. ${mensagem}` },
+    }),
+  ]);
+
+  revalidatePath(`/campaigns/${sessionId}/story`);
+  revalidatePath(`/play/${sessionId}`);
+  revalidatePath("/play/characters/new");
+  return { ok: true, nivelId: nivel.id };
 }

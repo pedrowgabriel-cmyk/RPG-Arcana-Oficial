@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { acessoMesa, claimEmailInvites, mesasSemPersonagem } from "@/lib/campaign-invites";
-import { limitesDaMesa } from "@/lib/character-creation/sacramento/rules";
+import { limitesComEconomia } from "@/lib/character-creation/sacramento/rules";
 import { CharacterWizard } from "./CharacterWizard";
 
 function SemConvite({ titulo, texto }: { titulo: string; texto: string }) {
@@ -70,9 +70,7 @@ export default async function NewCharacterPage({
     );
   }
 
-  const limites = limitesDaMesa(
-    (acesso.session.settings as { regrasCriacao?: unknown } | null)?.regrasCriacao,
-  );
+  const limites = limitesComEconomia(acesso.session.settings);
 
   if (acesso.session.gm_id !== auth.user.id) {
     const { count } = await createAdminClient()

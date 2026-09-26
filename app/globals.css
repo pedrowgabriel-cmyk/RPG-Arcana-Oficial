@@ -1021,3 +1021,34 @@ body {
   .sacra-poster:hover .sacra-logo-shine { animation: none !important; }
   .sacra-flash { display: none; }
 }
+
+/* ─── Régua da economia (regra de mesa) ─── */
+.regua-economia {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #4ecb8a, #9fd46a 17%, #f0cc6a 33%, #f3a54a 50%, #ec7a3c 67%, #e0503a 83%, #c0262d);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.regua-economia::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: #0c0a10;
+  border: 3px solid var(--regua-cor, #f0cc6a);
+  box-shadow: 0 0 14px var(--regua-cor, #f0cc6a);
+  transition: transform 0.15s ease;
+}
+.regua-economia::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: #0c0a10;
+  border: 3px solid var(--regua-cor, #f0cc6a);
+  box-shadow: 0 0 14px var(--regua-cor, #f0cc6a);
+}
+.regua-economia:active::-webkit-slider-thumb { transform: scale(1.15); }
+.regua-economia:focus-visible { outline: 2px solid #f0cc6a; outline-offset: 4px; }

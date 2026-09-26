@@ -7,6 +7,8 @@ import type { Session, SessionEvent } from "@/lib/types";
 import { updateStatus } from "@/app/dashboard/sessions/[id]/actions";
 import { updateRound } from "@/app/dashboard/sessions/[id]/play/actions";
 import { StatusBadge } from "@/components/sessions/SessionCard";
+import { ReguaEconomia } from "@/components/campaign-story/ReguaEconomia";
+import { economiaDaMesa, nivelEconomia } from "@/lib/rulesets/sacramento/economia";
 
 type Props = {
   session: Session;
@@ -28,6 +30,9 @@ export function GmPanelHeader({ session, events }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [economiaAberta, setEconomiaAberta] = useState(false);
+  const [economiaId, setEconomiaId] = useState(() => economiaDaMesa(session.settings).id);
+  const economia = nivelEconomia(economiaId);
 
   const startEvent = events.find((e) => e.type === "session_start");
   const elapsed = startEvent
@@ -101,6 +106,17 @@ export function GmPanelHeader({ session, events }: Props) {
         <div className="font-mono text-xs text-zinc-400">{formatElapsed(elapsed)}</div>
       )}
 
+      {session.ruleset === "sacramento" && (
+        <button
+          type="button"
+          onClick={() => setEconomiaAberta(true)}
+          title="Economia da mesa — mudar preços agora"
+          className="rounded border border-amber-500/40 bg-zinc-800 px-2 py-1 text-xs text-amber-200 hover:border-amber-400"
+        >
+          {economia.emoji} {economia.nome} ×{economia.multiplicador.toLocaleString("pt-BR")}
+        </button>
+      )}
+
       <div className="ml-auto flex items-center gap-1">
         {session.status === "active" && (
           <button
@@ -137,6 +153,29 @@ export function GmPanelHeader({ session, events }: Props) {
       </div>
 
       {error && <p className="ml-2 text-xs text-red-400">{error}</p>}
+
+      {economiaAberta && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+          <button aria-label="Fechar" onClick={() => setEconomiaAberta(false)} className="absolute inset-0 bg-black/70" />
+          <div className="arcana-card relative max-h-[90dvh] w-full max-w-2xl overflow-y-auto p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="arcana-heading text-xl tracking-[0.12em]">Economia da mesa</h2>
+              <button type="button" onClick={() => setEconomiaAberta(false)} className="arcana-btn-ghost arcana-btn-sm">
+                Fechar
+              </button>
+            </div>
+            <ReguaEconomia
+              sessionId={session.id}
+              nivelAtualId={economiaId}
+              onChange={(id) => {
+                setEconomiaId(id);
+                router.refresh();
+              }}
+              compacto
+            />
+          </div>
+        </div>
+      )}
     </header>
   );
 }

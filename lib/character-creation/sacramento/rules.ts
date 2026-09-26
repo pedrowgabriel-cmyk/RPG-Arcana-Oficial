@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { LOJAS, itemById, resumoCompras } from "./catalogo";
 import { habilidadeById } from "./habilidades";
+import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 
 export interface AtributoInfo {
   id: AtributoId;
@@ -87,6 +88,8 @@ export interface LimitesCriacao {
   habilidadesBloqueadas: string[];
   /** Quantos personagens cada jogador pode ter nesta campanha. */
   personagensPorJogador: number;
+  /** Economia da mesa (settings.economia) — calculado, não salvo em regrasCriacao. */
+  multiplicadorPrecos: number;
 }
 
 export const LIMITES_PADRAO: LimitesCriacao = {
@@ -99,6 +102,7 @@ export const LIMITES_PADRAO: LimitesCriacao = {
   itensIniciais: [],
   habilidadesBloqueadas: [],
   personagensPorJogador: 1,
+  multiplicadorPrecos: 1,
 };
 
 /** Sanitiza as regras salvas em sessions.settings.regrasCriacao sobre o padrão. */
@@ -137,6 +141,21 @@ export function limitesDaMesa(raw: unknown): LimitesCriacao {
       typeof r.personagensPorJogador === "number" && r.personagensPorJogador >= 1
         ? Math.min(5, Math.round(r.personagensPorJogador))
         : LIMITES_PADRAO.personagensPorJogador,
+    multiplicadorPrecos: 1,
+  };
+}
+
+/**
+ * Regras da mesa + economia atual: preços e dinheiro inicial já inflacionados.
+ * Use no criador e no servidor; o painel de regras edita o valor-base (limitesDaMesa).
+ */
+export function limitesComEconomia(settings: unknown): LimitesCriacao {
+  const base = limitesDaMesa((settings as { regrasCriacao?: unknown } | null)?.regrasCriacao);
+  const mult = economiaDaMesa(settings).multiplicador;
+  return {
+    ...base,
+    multiplicadorPrecos: mult,
+    dinheiroInicial: Math.round(base.dinheiroInicial * mult * 100) / 100,
   };
 }
 
@@ -253,7 +272,7 @@ export function validarFicha(
     }
   }
 
-  const compras = resumoCompras(ficha.compras ?? [], dinheiroInicial);
+  const compras = resumoCompras(ficha.compras ?? [], dinheiroInicial, limites?.multiplicadorPrecos ?? 1);
   if (compras.saldo < 0) {
     erros.push(`Compras acima do orçamento: os $${dinheiroInicial} iniciais não cobrem $${compras.custoTotal}.`);
   }

@@ -26,10 +26,14 @@ import { CalendarSection } from "./sections/CalendarSection";
 import { SecretsSection } from "./sections/SecretsSection";
 import { PartySection } from "./sections/PartySection";
 import { limitesDaMesa } from "@/lib/character-creation/sacramento/rules";
+import { economiaDaMesa, nivelEconomia } from "@/lib/rulesets/sacramento/economia";
+import { ReguaEconomia } from "./ReguaEconomia";
+import { SectionHeader } from "./ui";
 
 export type SectionId =
   | "overview"
   | "party"
+  | "economia"
   | "places"
   | "factions"
   | "npcs"
@@ -41,6 +45,7 @@ export type SectionId =
 const SECTIONS: { id: SectionId; label: string; kind?: CampaignElementKind }[] = [
   { id: "overview", label: "Visão geral" },
   { id: "party", label: "Jogadores" },
+  { id: "economia", label: "Economia" },
   { id: "places", label: "Lugares", kind: "place" },
   { id: "factions", label: "Facções", kind: "faction" },
   { id: "npcs", label: "NPCs", kind: "npc" },
@@ -81,6 +86,7 @@ type Props = {
 export function StoryHub({ session, initialElements, justCreated, party, invitesReady }: Props) {
   // Campanha recém-fundada abre no Bando: o próximo passo é convidar.
   const [active, setActive] = useState<SectionId>(justCreated ? "party" : "overview");
+  const [economiaId, setEconomiaId] = useState(() => economiaDaMesa(session.settings).id);
   const [config, setConfig] = useState<CampaignConfig>(session.campaign ?? {});
   const [elements, setElements] = useState<CampaignElement[]>(initialElements);
   const [banner, setBanner] = useState(justCreated);
@@ -213,6 +219,15 @@ export function StoryHub({ session, initialElements, justCreated, party, invites
           <div className="flex items-center gap-3">
             <button
               type="button"
+              onClick={() => setActive("economia")}
+              title="Economia da mesa — clique para mudar"
+              className="rounded-xl border border-arcana-border bg-arcana-surface px-3 py-2 font-cinzel text-[10px] uppercase tracking-[0.2em] text-arcana-text transition-all hover:border-arcana-gold/50"
+            >
+              {nivelEconomia(economiaId).emoji} {nivelEconomia(economiaId).nome} ×
+              {nivelEconomia(economiaId).multiplicador.toLocaleString("pt-BR")}
+            </button>
+            <button
+              type="button"
               onClick={() => setActive("party")}
               className="rounded-xl border border-arcana-border bg-arcana-surface px-3 py-2 font-cinzel text-[10px] uppercase tracking-[0.25em] text-arcana-text transition-all hover:border-arcana-gold/50"
             >
@@ -319,6 +334,17 @@ export function StoryHub({ session, initialElements, justCreated, party, invites
           {/* Conteúdo scrollável */}
           <main className="min-h-0 flex-1 overflow-y-auto px-5 py-6 lg:px-10 lg:py-8">
             {active === "overview" && <OverviewSection api={api} />}
+            {active === "economia" && (
+              <div className="max-w-3xl space-y-6">
+                <SectionHeader
+                  title="Economia"
+                  description="Como anda o dinheiro no Oeste desta campanha. Mude quando a história pedir — seca, corrida do ouro, cidade sitiada. Lojas, dinheiro inicial, serviços da Base e recompensas seguem a régua, e os jogadores são avisados na hora."
+                />
+                <div className="arcana-card p-5">
+                  <ReguaEconomia sessionId={session.id} nivelAtualId={economiaId} onChange={setEconomiaId} />
+                </div>
+              </div>
+            )}
             {active === "party" && (
               <PartySection
                 api={api}

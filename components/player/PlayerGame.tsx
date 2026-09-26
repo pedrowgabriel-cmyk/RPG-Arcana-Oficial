@@ -12,6 +12,8 @@ import type {
 import { PlayerCharacterSheet } from "./PlayerCharacterSheet";
 import { PlayerBottomSheet } from "./PlayerBottomSheet";
 import { PlayerTabNotifications } from "./PlayerTabNotifications";
+import { ArmazemDoJogo } from "./ArmazemDoJogo";
+import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 
 type Props = {
   session: Session;
@@ -39,6 +41,9 @@ export function PlayerGame({
   const unread = notifications.filter((n) => !n.read).length;
 
   const [notifOpen, setNotifOpen] = useState(false);
+  const [armazemOpen, setArmazemOpen] = useState(false);
+  const temArmazem = session.ruleset === "sacramento";
+  const economia = economiaDaMesa(session.settings);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
 
@@ -120,6 +125,32 @@ export function PlayerGame({
           onMarkRead={onMarkRead}
         />
       </div>
+
+      {/* Armazém (Sacramento): preços seguem a economia da mesa ao vivo */}
+      {temArmazem && (
+        <button
+          type="button"
+          onClick={() => setArmazemOpen(true)}
+          className="fixed bottom-4 right-4 z-[110] flex items-center gap-2 rounded-full border border-amber-400/70 bg-zinc-950/95 px-4 py-2.5 text-sm font-semibold text-amber-200 shadow-[0_0_20px_rgba(240,204,106,0.35)] backdrop-blur-sm transition-transform active:scale-95"
+          aria-label="Abrir armazém"
+        >
+          🛒 Armazém
+          <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-xs text-amber-100">
+            {economia.emoji} ×{economia.multiplicador.toLocaleString("pt-BR")}
+          </span>
+        </button>
+      )}
+      {temArmazem && (
+        <PlayerBottomSheet
+          open={armazemOpen}
+          onClose={() => setArmazemOpen(false)}
+          title="Armazém"
+          subtitle={`${economia.nome} · ×${economia.multiplicador.toLocaleString("pt-BR")}`}
+          accent="gold"
+        >
+          <ArmazemDoJogo session={session} character={character} />
+        </PlayerBottomSheet>
+      )}
 
       {/* Mobile notifications sheet */}
       <PlayerBottomSheet

@@ -10,6 +10,7 @@ import {
   itemImagem,
   montariasCompradas,
   resumoCompras,
+  precoNaMesa,
   type ItemCatalogo,
   type LojaInfo,
 } from "@/lib/character-creation/sacramento/catalogo";
@@ -124,7 +125,11 @@ export default function StepCompras({ data, onUpdate, onAmbient, limites: limite
   };
 
   const qty = (id: string) => compras.find((c) => c.id === id)?.quantidade ?? 0;
-  const resumo = useMemo(() => resumoCompras(compras, limites.dinheiroInicial), [compras, limites.dinheiroInicial]);
+  const resumo = useMemo(
+    () => resumoCompras(compras, limites.dinheiroInicial, limites.multiplicadorPrecos),
+    [compras, limites.dinheiroInicial, limites.multiplicadorPrecos],
+  );
+  const precoDe = (preco: number) => precoNaMesa(preco, limites.multiplicadorPrecos);
   const animais = montariasCompradas(compras);
   const totalItens = compras.reduce((n, c) => n + c.quantidade, 0);
 
@@ -445,7 +450,7 @@ export default function StepCompras({ data, onUpdate, onAmbient, limites: limite
                 </p>
                 <div className="mt-auto pt-1.5 flex items-center justify-between gap-2">
                   <span className="font-cinzel text-sm text-arcana-gold-bright">
-                    {fmt(item.preco)}
+                    {fmt(precoDe(item.preco))}
                     <span className="ml-1.5 font-cinzel text-[10px] uppercase tracking-[0.08em] text-arcana-text-dim">
                       {item.espaco === null ? "—" : item.espaco} esp
                     </span>
@@ -531,7 +536,7 @@ export default function StepCompras({ data, onUpdate, onAmbient, limites: limite
                       {c.item!.nome}
                     </p>
                     <p className="font-cinzel text-[10px] uppercase tracking-[0.08em] text-arcana-text-dim mt-0.5">
-                      {fmt(c.item!.preco)} cada · {fmt(c.item!.preco * c.quantidade)}
+                      {fmt(precoDe(c.item!.preco))} cada · {fmt(precoDe(c.item!.preco) * c.quantidade)}
                     </p>
                   </div>
                   <Stepper

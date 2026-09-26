@@ -328,6 +328,11 @@ export const CATALOGO: ItemCatalogo[] = [
   { id: "gengibre", nome: "Gengibre (raiz)", categoria: "farmacia", preco: 2, espaco: 0.5, descricao: "Esquenta o peito e espanta enjoo de estrada e de barco." },
 ];
 
+/** Preço com a economia da mesa, em centavos de réis. */
+export function precoNaMesa(preco: number, multiplicador = 1): number {
+  return Math.round(preco * multiplicador * 100) / 100;
+}
+
 export function itemById(id: string): ItemCatalogo | undefined {
   return CATALOGO.find((i) => i.id === id);
 }
@@ -370,7 +375,12 @@ const CAPACIDADE_MONTARIA = 15;
  * (máx. 4 prontas + 1 faca fora do limite; máx. 2 bandoleiras);
  * o resto guarda na mochila (10) e na montaria comprada (15), se houver.
  */
-export function resumoCompras(itens: CompraItem[], orcamento: number = ORCAMENTO): ResumoCompras {
+export function resumoCompras(
+  itens: CompraItem[],
+  orcamento: number = ORCAMENTO,
+  /** Economia da mesa (regra de mesa): multiplica o preço de tabela. */
+  multiplicador = 1,
+): ResumoCompras {
   let custoTotal = 0;
   let espaco = 0;
   const avisos: string[] = [];
@@ -392,7 +402,7 @@ export function resumoCompras(itens: CompraItem[], orcamento: number = ORCAMENTO
   for (const { id, quantidade } of itens) {
     const item = itemById(id);
     if (!item || quantidade <= 0) continue;
-    custoTotal += item.preco * quantidade;
+    custoTotal += precoNaMesa(item.preco, multiplicador) * quantidade;
 
     let guardadas = quantidade;
     if (item.vestivel) {
@@ -413,9 +423,10 @@ export function resumoCompras(itens: CompraItem[], orcamento: number = ORCAMENTO
   }
 
   const capacidade = CAPACIDADE_MOCHILA + CAPACIDADE_MONTARIA * nMontarias;
+  custoTotal = Math.round(custoTotal * 100) / 100;
   return {
     custoTotal,
-    saldo: orcamento - custoTotal,
+    saldo: Math.round((orcamento - custoTotal) * 100) / 100,
     espacoUsado: espaco,
     capacidade,
     armasProntas: armasProntas + (facaLivreUsada ? 1 : 0),

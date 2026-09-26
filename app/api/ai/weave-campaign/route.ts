@@ -11,6 +11,7 @@ import { SACRAMENTO_THEMES, SACRAMENTO_TONES } from "@/lib/rulesets/sacramento/t
 import { SACRAMENTO_PLACES } from "@/lib/rulesets/sacramento/places";
 import { SACRAMENTO_FACTIONS } from "@/lib/rulesets/sacramento/factions";
 import { WEAVE_SCHEMA, sanitizeWoven } from "@/lib/rulesets/sacramento/weave";
+import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 
 // A campanha inteira sai numa chamada só — pode levar alguns minutos.
 export const maxDuration = 300;
@@ -150,6 +151,7 @@ export async function POST(request: Request) {
     .map((id) => SACRAMENTO_THEMES.find((t) => t.id === id)?.nome ?? id)
     .join(", ");
   const tom = SACRAMENTO_TONES.find((t) => t.id === campaign.tone)?.nome;
+  const economia = economiaDaMesa(session.settings);
 
   const userPrompt = [
     "## Campanha",
@@ -159,6 +161,7 @@ export async function POST(request: Request) {
     tom && `Tom: ${tom}`,
     temas && `Temas: ${temas}`,
     `Época: ${campaign.epoch ?? 1880}`,
+    `Economia da mesa (regra de mesa): ${economia.nome}, ×${economia.multiplicador} sobre os preços do livro — recompensas e valores propostos em réis devem já refletir esse multiplicador e dizer isso.`,
     (campaign.session_zero?.lines?.length ?? 0) > 0 && `Linhas (proibido): ${campaign.session_zero!.lines!.join("; ")}`,
     (campaign.session_zero?.veils?.length ?? 0) > 0 && `Véus (só em segundo plano): ${campaign.session_zero!.veils!.join("; ")}`,
     "",

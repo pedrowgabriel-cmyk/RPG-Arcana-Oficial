@@ -190,7 +190,7 @@ export function RegrasMesaPanel({ sessionId, initial }: { sessionId: string; ini
       </Bloco>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <Bloco titulo="Dinheiro inicial" dica="Para as compras da criação. O livro dá $200 (p. 52).">
+        <Bloco titulo="Dinheiro inicial" dica="Valor de tabela para as compras da criação (o livro dá $200, p. 52). A régua de Economia multiplica este valor e os preços juntos.">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-cinzel text-lg text-arcana-gold-bright">$</span>
             <input

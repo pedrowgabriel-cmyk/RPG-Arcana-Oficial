@@ -153,7 +153,7 @@ export default function StepRevisao({
   const ficha = data.ficha ?? FICHA_INICIAL;
   const derivados = calcularDerivados(ficha, contarParrudeza(ficha.habilidades));
   const validacao = validarFicha(ficha, limites?.dinheiroInicial, limites);
-  const compras = resumoCompras(ficha.compras ?? [], limites?.dinheiroInicial);
+  const compras = resumoCompras(ficha.compras ?? [], limites?.dinheiroInicial, limites?.multiplicadorPrecos ?? 1);
 
   const habilidadesNomes = (() => {
     const parr = contarParrudeza(ficha.habilidades);
