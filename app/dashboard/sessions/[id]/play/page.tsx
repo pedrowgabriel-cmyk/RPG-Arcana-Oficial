@@ -9,6 +9,9 @@ import type {
   StoryTemplate,
 } from "@/lib/types";
 import { GmPanel } from "@/components/gm-panel/GmPanel";
+import { MesaDoJuiz } from "@/components/mesa/MesaDoJuiz";
+import { createAdminClient } from "@/lib/supabase-admin";
+import type { CampaignElement } from "@/lib/types";
 import type { GmPanelData, PlayerOption } from "@/components/gm-panel/types";
 
 export default async function PlayPage({
@@ -29,6 +32,35 @@ export default async function PlayPage({
 
   if (session.status !== "active" && session.status !== "paused") {
     redirect(`/dashboard/sessions/${id}`);
+  }
+
+  // Sacramento tem mesa própria (fichas reais, Dor, Sina, iniciativa por cartas).
+  if (session.ruleset === "sacramento") {
+    const admin = createAdminClient();
+    const [chars, evs, els, sps] = await Promise.all([
+      supabase.from("characters").select("*").eq("session_id", id).neq("owner_id", session.gm_id).order("created_at"),
+      supabase.from("session_events").select("*").eq("session_id", id).order("created_at", { ascending: false }).limit(80),
+      supabase.from("campaign_elements").select("*").eq("session_id", id).in("kind", ["scene", "npc", "place"]).order("position"),
+      admin
+        .from("session_players")
+        .select("player_id, profile:profiles!session_players_player_id_fkey(display_name)")
+        .eq("session_id", id),
+    ]);
+    const jogadores = Object.fromEntries(
+      ((sps.data ?? []) as unknown as { player_id: string; profile: { display_name: string } | null }[]).map((p) => [
+        p.player_id,
+        p.profile?.display_name ?? "Jogador",
+      ]),
+    );
+    return (
+      <MesaDoJuiz
+        initialSession={session}
+        initialCharacters={(chars.data ?? []) as Character[]}
+        initialEvents={(evs.data ?? []) as SessionEvent[]}
+        elementos={(els.data ?? []) as CampaignElement[]}
+        jogadores={jogadores}
+      />
+    );
   }
 
   const [

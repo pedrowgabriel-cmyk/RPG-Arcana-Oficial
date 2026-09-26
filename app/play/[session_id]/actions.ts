@@ -7,6 +7,8 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { itemById, LOJAS, precoNaMesa } from "@/lib/character-creation/sacramento/catalogo";
 import { limitesComEconomia } from "@/lib/character-creation/sacramento/rules";
 import { economiaDaMesa, formatarReis } from "@/lib/rulesets/sacramento/economia";
+import { nomeCarta, rolar, type Rolagem, type TipoRolagem } from "@/lib/rulesets/sacramento/mesa";
+import type { Carta } from "@/lib/rulesets/sacramento/types";
 
 type InventarioItem = {
   id?: string;
@@ -128,4 +130,67 @@ export async function comprarNoArmazem(
 
   revalidatePath(`/play/${sessionId}`);
   return { ok: true, saldo, pago: total };
+}
+
+/* ── Mesa do jogador: rolagens e Sina ── */
+
+async function meuPersonagem(sessionId: string, characterId: string) {
+  const auth = await getProfile();
+  if (!auth) return null;
+  const supabase = await createClient();
+  const { data: c } = await supabase
+    .from("characters")
+    .select("id, name, owner_id, session_id, stats")
+    .eq("id", characterId)
+    .maybeSingle<{ id: string; name: string; owner_id: string; session_id: string | null; stats: Record<string, unknown> | null }>();
+  if (!c || c.owner_id !== auth.user.id || c.session_id !== sessionId) return null;
+  return { auth, supabase, c };
+}
+
+/** O jogador rola; o dado é sorteado aqui e vai para o log público da mesa. */
+export async function rolarTesteJogador(
+  sessionId: string,
+  characterId: string,
+  p: { tipo: TipoRolagem; rotulo: string; mod: number; na?: number | null },
+): Promise<{ ok: true; rolagem: Rolagem } | { ok: false; error: string }> {
+  const ctx = await meuPersonagem(sessionId, characterId);
+  if (!ctx) return { ok: false, error: "Personagem não encontrado nesta mesa." };
+  const tipo: TipoRolagem = ["teste", "ataque", "melhor2", "sorte", "morte"].includes(p.tipo) ? p.tipo : "teste";
+  const rolagem = rolar({ tipo, rotulo: p.rotulo.slice(0, 60), quem: ctx.c.name, mod: Math.max(-5, Math.min(12, p.mod)), na: p.na ?? null });
+  await createAdminClient().from("session_events").insert({
+    session_id: sessionId,
+    actor_id: ctx.auth.user.id,
+    type: "player_note",
+    is_public: true,
+    payload: { kind: "rolagem", texto: `${ctx.c.name} · ${rolagem.rotulo}: ${rolagem.texto}`, rolagem },
+  });
+  return { ok: true, rolagem };
+}
+
+/** Gastar uma Carta de Sina (refazer teste, evitar Teste de Morte…). Cada Sina gasta vira 1 do Juiz. */
+export async function usarSinaJogador(
+  sessionId: string,
+  characterId: string,
+  indice: number,
+  motivo: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await meuPersonagem(sessionId, characterId);
+  if (!ctx) return { ok: false, error: "Personagem não encontrado nesta mesa." };
+  const stats = { ...(ctx.c.stats ?? {}) };
+  const sina = Array.isArray(stats.sina) ? [...(stats.sina as Carta[])] : [];
+  const carta = sina[indice];
+  if (!carta) return { ok: false, error: "Carta inexistente." };
+  sina.splice(indice, 1);
+  stats.sina = sina;
+  stats.sinaDoJuiz = typeof stats.sinaDoJuiz === "number" ? (stats.sinaDoJuiz as number) + 1 : 1;
+  const { error } = await ctx.supabase.from("characters").update({ stats }).eq("id", ctx.c.id);
+  if (error) return { ok: false, error: error.message };
+  await createAdminClient().from("session_events").insert({
+    session_id: sessionId,
+    actor_id: ctx.auth.user.id,
+    type: "player_note",
+    is_public: true,
+    payload: { kind: "sina", texto: `${ctx.c.name} gastou a Sina ${nomeCarta(carta)}${motivo ? ` para ${motivo}` : ""}` },
+  });
+  return { ok: true };
 }

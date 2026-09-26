@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { PlayerLobby } from "./PlayerLobby";
 import { PlayerGame } from "./PlayerGame";
+import { MesaDoJogador } from "@/components/mesa/MesaDoJogador";
 
 type LobbyPlayer = {
   player_id: string;
@@ -208,6 +209,20 @@ export function PlayerView({
     refetchCharacter,
     refetchPlayers,
   ]);
+
+  // Sacramento: mesa própria (Vida/Dor/Sina, cartas, rolagens no servidor).
+  if (session.ruleset === "sacramento") {
+    return (
+      <MesaDoJogador
+        session={session}
+        character={character}
+        mediaState={mediaState}
+        notifications={notifications}
+        publicEvents={publicEvents}
+        onMarkRead={markRead}
+      />
+    );
+  }
 
   const hpPercent = character.max_hp > 0 ? (character.hp / character.max_hp) * 100 : 0;
   const critical = hpPercent < 25 && character.hp > 0;
