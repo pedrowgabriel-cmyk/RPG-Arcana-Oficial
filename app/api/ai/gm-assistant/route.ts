@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { MODELOS, chatGPT, respostaDeErroIA } from "@/lib/openai";
 import { NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { createClient } from "@/lib/supabase-server";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = MODELOS.conversa;
 const MAX_MESSAGE_CHARS = 2000;
 
 const SYSTEM_PROMPT = `Você é um assistente de RPG de mesa para o Mestre da partida.
@@ -116,31 +116,18 @@ export async function POST(request: Request) {
     .select("id")
     .single<{ id: string }>();
 
-  const client = new Anthropic();
-
   try {
-    const messages = [
-      ...body.history.slice(-10).map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      { role: "user" as const, content: userMessage },
-    ];
-
-    const response = await client.messages.create({
+    const { texto: text, tokens: tokensUsed } = await chatGPT({
       model: MODEL,
-      max_tokens: 1024,
-      thinking: { type: "disabled" },
-      output_config: { effort: "low" },
-      system: SYSTEM_PROMPT,
-      messages,
+      maxTokens: 4000,
+      esforco: "minimal",
+      timeoutMs: 60000,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...body.history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: userMessage },
+      ],
     });
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    const text = textBlock && textBlock.type === "text" ? textBlock.text : "";
-
-    const tokensUsed =
-      (response.usage.input_tokens ?? 0) + (response.usage.output_tokens ?? 0);
 
     if (aiRequest) {
       await admin
@@ -165,15 +152,7 @@ export async function POST(request: Request) {
         })
         .eq("id", aiRequest.id);
     }
-    if (error instanceof Anthropic.RateLimitError) {
-      return NextResponse.json(
-        { error: "Limite de requisições atingido." },
-        { status: 429 }
-      );
-    }
-    if (error instanceof Anthropic.APIError) {
-      return NextResponse.json({ error: "Erro na chamada à IA" }, { status: 502 });
-    }
-    return NextResponse.json({ error: "Erro inesperado" }, { status: 500 });
+    const erro = respostaDeErroIA(error);
+    return NextResponse.json({ error: erro.error }, { status: erro.status });
   }
 }

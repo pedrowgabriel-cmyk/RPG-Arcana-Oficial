@@ -224,3 +224,22 @@ export function wovenToElements(
   }
   return out;
 }
+
+/** Resume um elemento já criado pelo Juiz com seus campos preenchidos. */
+export function detalheElemento(kind: string, data: Record<string, unknown>): string {
+  const titulo = String(data.nome ?? data.titulo ?? "(sem nome)");
+  const campos = Object.entries(data)
+    .filter(([k, v]) => !["nome", "titulo", "imagem", "emblema", "mapa", "paginas", "cartasGeradas", "canonId", "origem"].includes(k) && typeof v === "string" && v.trim())
+    .map(([k, v]) => `${k}: ${String(v).trim().slice(0, 400)}`);
+  return `- [${kind}] ${titulo}${campos.length ? ` — ${campos.join(" | ")}` : ""}`;
+}
+
+export const ROTULO_KIND: Record<string, string> = {
+  place: "lugar",
+  faction: "facção",
+  npc: "NPC",
+  scene: "cena",
+  mission: "missão",
+  calendar_event: "calendário",
+  secret_note: "segredo",
+};

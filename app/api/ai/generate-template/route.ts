@@ -1,9 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { MODELOS, chatGPT, respostaDeErroIA } from "@/lib/openai";
 import { NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase-admin";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = MODELOS.criativo;
 const MAX_PROMPT_CHARS = 2000;
 
 const SYSTEM_PROMPT = `Você é um assistente especializado em RPG de mesa. Dado um prompt do Mestre, gere um template completo de aventura em JSON. Responda APENAS com o JSON, sem markdown, sem explicações.
@@ -137,28 +137,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Falha ao registrar requisição" }, { status: 500 });
   }
 
-  const client = new Anthropic();
-
   try {
-    const response = await client.messages.parse({
+    const { texto, tokens: tokensUsed } = await chatGPT({
       model: MODEL,
-      max_tokens: 8192,
-      thinking: { type: "disabled" },
-      output_config: {
-        effort: "low",
-        format: { type: "json_schema", schema: TEMPLATE_SCHEMA },
-      },
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: prompt }],
+      maxTokens: 16000,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt },
+      ],
+      schema: { name: "template_aventura", schema: TEMPLATE_SCHEMA },
     });
-
-    const parsed = response.parsed_output;
-    if (!parsed) {
-      throw new Error("IA não retornou JSON válido");
-    }
-
-    const tokensUsed =
-      (response.usage.input_tokens ?? 0) + (response.usage.output_tokens ?? 0);
+    const parsed = JSON.parse(texto) as unknown;
 
     await admin
       .from("ai_requests")
@@ -180,18 +169,7 @@ export async function POST(request: Request) {
       })
       .eq("id", aiRequest.id);
 
-    if (error instanceof Anthropic.RateLimitError) {
-      return NextResponse.json(
-        { error: "Limite de requisições atingido. Tente novamente em instantes." },
-        { status: 429 }
-      );
-    }
-    if (error instanceof Anthropic.APIError) {
-      return NextResponse.json(
-        { error: "Erro na chamada à IA" },
-        { status: 502 }
-      );
-    }
-    return NextResponse.json({ error: "Erro inesperado" }, { status: 500 });
+    const erro = respostaDeErroIA(error);
+    return NextResponse.json({ error: erro.error }, { status: erro.status });
   }
 }

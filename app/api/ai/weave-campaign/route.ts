@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { MODELOS, chatGPT, respostaDeErroIA } from "@/lib/openai";
 import { getProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase-server";
 import { createAdminClient } from "@/lib/supabase-admin";
@@ -9,21 +10,15 @@ import type { ElementosHistoria, HistoriaEstruturada } from "@/lib/character-cre
 import { SACRAMENTO_THEMES, SACRAMENTO_TONES } from "@/lib/rulesets/sacramento/themes";
 import { SACRAMENTO_PLACES } from "@/lib/rulesets/sacramento/places";
 import { SACRAMENTO_FACTIONS } from "@/lib/rulesets/sacramento/factions";
-import { WEAVE_ETAPAS, sanitizeWoven, type EtapaWeave } from "@/lib/rulesets/sacramento/weave";
+import { WEAVE_ETAPAS, detalheElemento, sanitizeWoven, type EtapaWeave } from "@/lib/rulesets/sacramento/weave";
 import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
 import { palavrasDoJogador } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 
 // Fundação + três etapas em paralelo — pode levar alguns minutos.
 export const maxDuration = 300;
 
-// GPT: a conta Anthropic ficou sem créditos e o resto da IA do app já roda na OpenAI.
-const MODEL = process.env.OPENAI_CAMPAIGN_MODEL ?? "gpt-5";
-
-class ErroIA extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
+// Toda a IA do app roda no GPT (lib/openai.ts).
+const MODEL = MODELOS.criativo;
 const MAX_INSTRUCTION_CHARS = 2000;
 
 // Os dois documentos normativos entram inteiros no system prompt (com cache).
@@ -71,15 +66,6 @@ const PEDIDO_ETAPA: Record<EtapaWeave, string> = {
   tramas:
     "ETAPA 4 — TRAMAS. Proponha 3–5 missões, 2–4 eventos de calendário e segredos do Juiz: 1 segredo por personagem do bando (o gancho que o Juiz guarda para aquele PJ) + 1–3 segredos gerais.",
 };
-
-/** Resume um elemento já criado pelo Juiz com seus campos preenchidos. */
-function detalheElemento(kind: string, data: Record<string, unknown>): string {
-  const titulo = String(data.nome ?? data.titulo ?? "(sem nome)");
-  const campos = Object.entries(data)
-    .filter(([k, v]) => !["nome", "titulo", "imagem", "emblema", "mapa", "paginas", "cartasGeradas", "canonId", "origem"].includes(k) && typeof v === "string" && v.trim())
-    .map(([k, v]) => `${k}: ${String(v).trim().slice(0, 400)}`);
-  return `- [${kind}] ${titulo}${campos.length ? ` — ${campos.join(" | ")}` : ""}`;
-}
 
 function resumoPersonagem(c: PartyCharacter, jogador: string): string {
   const story = (c.story ?? {}) as { historia?: HistoriaEstruturada; elementos?: ElementosHistoria };
@@ -245,44 +231,27 @@ export async function POST(request: Request) {
 
   let tokens = 0;
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new ErroIA(500, "OPENAI_API_KEY não configurada no servidor");
     const docs = await loadDocs();
     const system = `${INSTRUCOES}\n\n${docs}`;
 
+    // Um schema por etapa: um único com a campanha inteira fica grande demais.
     const etapa = async (nome: EtapaWeave, fundacao?: unknown) => {
       const conteudo = [
         contexto,
         fundacao ? `\n## Fundação já proposta (use estes nomes)\n${JSON.stringify(fundacao)}` : "",
         `\n${PEDIDO_ETAPA[nome]}`,
       ].join("\n");
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: MODEL,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: conteudo },
-          ],
-          // Um schema por etapa: um único com a campanha inteira fica grande demais.
-          response_format: { type: "json_schema", json_schema: { name: `campanha_${nome}`, strict: true, schema: WEAVE_ETAPAS[nome] } },
-          max_completion_tokens: 24000,
-          ...(MODEL.startsWith("gpt-5") || MODEL.startsWith("o") ? { reasoning_effort: "low" } : {}),
-        }),
-        signal: AbortSignal.timeout(170000),
+      const r = await chatGPT({
+        model: MODEL,
+        maxTokens: 24000,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: conteudo },
+        ],
+        schema: { name: `campanha_${nome}`, schema: WEAVE_ETAPAS[nome] },
       });
-      const json = (await res.json().catch(() => ({}))) as {
-        choices?: { finish_reason?: string; message?: { content?: string; refusal?: string } }[];
-        usage?: { total_tokens?: number };
-        error?: { message?: string };
-      };
-      if (!res.ok) throw new ErroIA(res.status, json.error?.message ?? `HTTP ${res.status}`);
-      tokens += json.usage?.total_tokens ?? 0;
-      const choice = json.choices?.[0];
-      if (choice?.finish_reason === "length") throw new ErroIA(502, `Etapa ${nome} cortada no limite de tamanho`);
-      if (!choice?.message?.content) throw new ErroIA(502, choice?.message?.refusal ?? `Etapa ${nome} voltou vazia`);
-      return JSON.parse(choice.message.content) as Record<string, unknown>;
+      tokens += r.tokens;
+      return JSON.parse(r.texto) as Record<string, unknown>;
     };
 
     const fundacao = await etapa("fundacao");
@@ -302,20 +271,7 @@ export async function POST(request: Request) {
   } catch (error) {
     await finish({ status: "failed", response: String((error as Error)?.message ?? error).slice(0, 2000) });
     console.error("[weave-campaign]", error);
-    if (error instanceof ErroIA) {
-      return NextResponse.json(
-        {
-          error:
-            error.status === 429
-              ? "Limite de uso da IA atingido. Tente de novo em 1 minuto."
-              : `Erro na chamada à IA (${error.status}): ${error.message.slice(0, 240)}`,
-        },
-        { status: error.status === 429 ? 429 : 502 },
-      );
-    }
-    if ((error as Error)?.name === "TimeoutError") {
-      return NextResponse.json({ error: "A IA demorou demais. Tente de novo." }, { status: 504 });
-    }
-    return NextResponse.json({ error: "A IA não conseguiu montar a campanha. Tente de novo." }, { status: 500 });
+    const erro = respostaDeErroIA(error);
+    return NextResponse.json({ error: erro.error }, { status: erro.status });
   }
 }

@@ -1,4 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { MODELOS, chatGPT, respostaDeErroIA } from "@/lib/openai";
+import { ROTULO_KIND, detalheElemento } from "@/lib/rulesets/sacramento/weave";
+import { SECTION_ASK, schemaFor, type Section } from "@/lib/rulesets/sacramento/propostas";
 import { NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase-server";
@@ -6,10 +8,11 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import type { CampaignConfig } from "@/lib/types";
 import { SACRAMENTO_THEMES, SACRAMENTO_TONES } from "@/lib/rulesets/sacramento/themes";
 
-const MODEL = "claude-opus-5";
+export const maxDuration = 120;
+
+const MODEL = MODELOS.criativo;
 const MAX_INSTRUCTION_CHARS = 1000;
 
-type Section = "hooks" | "npc" | "scene" | "mission";
 
 const SECTIONS: Section[] = ["hooks", "npc", "scene", "mission"];
 
@@ -27,91 +30,6 @@ Regras invioláveis desta geração (Doc 2 §3.3):
 7. Lugares/pessoas canônicos citados devem existir no cenário; criações novas nunca alegam ser do livro.
 8. NPCs são participantes da história, não invulneráveis.
 Responda em português brasileiro, no tom do velho oeste mineiro.`;
-
-const PROPOSAL_BASE = {
-  titulo: { type: "string" },
-  referencias: {
-    type: "string",
-    description:
-      "Páginas do livro citadas (ex.: 'pp. 152–167') ou 'decisão proposta' quando um dado mecânico não vem do livro. Vazio se nada mecânico foi sugerido.",
-  },
-} as const;
-
-function schemaFor(section: Section) {
-  const proposalProps: Record<string, unknown> = (() => {
-    switch (section) {
-      case "hooks":
-        return {
-          ...PROPOSAL_BASE,
-          texto: { type: "string", description: "O gancho: situação aberta, 2–4 frases." },
-        };
-      case "npc":
-        return {
-          ...PROPOSAL_BASE,
-          nome: { type: "string" },
-          ocupacao: { type: "string" },
-          descricao: { type: "string" },
-          desejo: { type: "string" },
-          medo: { type: "string" },
-          segredo: { type: "string" },
-          agenda: { type: "string" },
-        };
-      case "scene":
-        return {
-          ...PROPOSAL_BASE,
-          lugar: { type: "string" },
-          descricaoPublica: { type: "string" },
-          fatosVerdadeiros: { type: "string" },
-          rumores: { type: "string" },
-          testesPossiveis: {
-            type: "string",
-            description: "Testes POSSÍVEIS (nunca exigidos) com Antecedente sugerido.",
-          },
-          consequenciasPossiveis: { type: "string" },
-        };
-      case "mission":
-        return {
-          ...PROPOSAL_BASE,
-          proponente: { type: "string" },
-          objetivo: { type: "string" },
-          motivo: { type: "string" },
-          recompensa: {
-            type: "string",
-            description: "Proposta de recompensa em réis ou favor — sujeita ao Juiz.",
-          },
-          consequencias: { type: "string" },
-        };
-    }
-  })();
-
-  const required = ["titulo", "referencias", ...Object.keys(proposalProps)].filter(
-    (v, i, arr) => arr.indexOf(v) === i,
-  );
-
-  return {
-    type: "object",
-    properties: {
-      proposals: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: proposalProps,
-          required,
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ["proposals"],
-    additionalProperties: false,
-  } as const;
-}
-
-const SECTION_ASK: Record<Section, string> = {
-  hooks: "Gere 3 propostas de ganchos de história para esta campanha.",
-  npc: "Gere 3 propostas de NPCs (apenas campos narrativos — sem ficha mecânica).",
-  scene: "Gere 2 propostas de cenas preparadas.",
-  mission: "Gere 2 propostas de missões.",
-};
 
 export async function POST(request: Request) {
   const profileResult = await getProfile();
@@ -170,11 +88,21 @@ export async function POST(request: Request) {
   }
 
   const campaign = (session.campaign ?? {}) as CampaignConfig;
-  const { data: placeElements } = await supabase
-    .from("campaign_elements")
-    .select("kind, data")
-    .eq("session_id", sessionId)
-    .in("kind", ["place", "faction"]);
+  const [{ data: placeElements }, { data: bando }] = await Promise.all([
+    supabase.from("campaign_elements").select("kind, data").eq("session_id", sessionId),
+    supabase.from("characters").select("name, story").eq("session_id", sessionId).neq("owner_id", profileResult.user.id),
+  ]);
+  // Tudo que o Juiz já preencheu entra com detalhes — a IA complementa, nunca duplica.
+  const jaPreenchido = (placeElements ?? [])
+    .map((el) => detalheElemento(ROTULO_KIND[el.kind] ?? el.kind, (el.data ?? {}) as Record<string, unknown>))
+    .join("\n")
+    .slice(0, 20000);
+  const resumoBando = (bando ?? [])
+    .map((c) => {
+      const st = (c.story ?? {}) as { elementos?: { conceito?: string; origem?: string; ocupacao?: string }; historia?: { resumo?: string } };
+      return `- ${c.name}: ${[st.elementos?.conceito, st.elementos?.ocupacao, st.elementos?.origem && `de ${st.elementos.origem}`, st.historia?.resumo].filter(Boolean).join(" · ")}`;
+    })
+    .join("\n");
 
   const placeNames = (placeElements ?? [])
     .filter((el) => el.kind === "place")
@@ -199,13 +127,15 @@ export async function POST(request: Request) {
     `Época: ${campaign.epoch ?? 1880}`,
     placeNames.length > 0 && `Lugares na campanha: ${placeNames.join(", ")}`,
     factionNames.length > 0 && `Facções na campanha: ${factionNames.join(", ")}`,
+    resumoBando && `Bando (personagens dos jogadores):\n${resumoBando}`,
+    jaPreenchido && `Já preenchido pelo Juiz (manter, costurar e não duplicar):\n${jaPreenchido}`,
   ].filter(Boolean);
 
   const userPrompt = [
     contextLines.join("\n"),
     "",
     SECTION_ASK[section as Section],
-    instruction ? `Direção do Juiz: ${instruction}` : "",
+    instruction ? `Direção do Juiz (prioridade máxima): ${instruction}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -228,28 +158,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Falha ao registrar requisição" }, { status: 500 });
   }
 
-  const client = new Anthropic();
-
   try {
-    const response = await client.messages.parse({
+    const { texto, tokens: tokensUsed } = await chatGPT({
       model: MODEL,
-      max_tokens: 8192,
-      thinking: { type: "adaptive" },
-      output_config: {
-        effort: "low",
-        format: { type: "json_schema", schema: schemaFor(section as Section) },
-      },
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      maxTokens: 12000,
+      timeoutMs: 110000,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      schema: { name: `propostas_${section}`, schema: schemaFor(section as Section) },
     });
-
-    const parsed = response.parsed_output;
-    if (!parsed) {
-      throw new Error("IA não retornou JSON válido");
-    }
-
-    const tokensUsed =
-      (response.usage.input_tokens ?? 0) + (response.usage.output_tokens ?? 0);
+    const parsed = JSON.parse(texto) as unknown;
 
     await admin
       .from("ai_requests")
@@ -268,15 +188,7 @@ export async function POST(request: Request) {
       .update({ status: "failed", completed_at: new Date().toISOString() })
       .eq("id", aiRequest.id);
 
-    if (error instanceof Anthropic.RateLimitError) {
-      return NextResponse.json(
-        { error: "Limite de requisições atingido. Tente novamente em instantes." },
-        { status: 429 },
-      );
-    }
-    if (error instanceof Anthropic.APIError) {
-      return NextResponse.json({ error: "Erro na chamada à IA" }, { status: 502 });
-    }
-    return NextResponse.json({ error: "Erro inesperado" }, { status: 500 });
+    const erro = respostaDeErroIA(error);
+    return NextResponse.json({ error: erro.error }, { status: erro.status });
   }
 }
