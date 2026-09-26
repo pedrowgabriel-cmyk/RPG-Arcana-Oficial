@@ -36,11 +36,14 @@ export function RetratoEstado({
   return (
     <div className={`relative overflow-hidden rounded-xl bg-[#15121c] ${className}`}>
       {img.estados ? (
+        // Célula quadrada da prancha: altura cheia, laterais cortadas (sem esticar).
         <div
           role="img"
           aria-label={`${character.name} — ${ROTULO_ESTADO[idx]}`}
-          className="absolute inset-0 transition-[background-position] duration-700"
+          className="absolute left-1/2 top-0 h-full -translate-x-1/2 transition-[background-position] duration-700"
           style={{
+            aspectRatio: "1 / 1",
+            minWidth: "100%",
             backgroundImage: `url(${img.estados})`,
             backgroundSize: "300% 200%",
             backgroundPosition: `${col * 50}% ${lin * 100}%`,

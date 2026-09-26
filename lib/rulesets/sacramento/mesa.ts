@@ -289,3 +289,56 @@ export function iniciativaDaMesa(settings: unknown): Iniciativa | null {
   const i = (settings as { iniciativa?: Iniciativa } | null)?.iniciativa;
   return i && i.ativa && Array.isArray(i.ordem) ? i : null;
 }
+
+/* ── Dano e cura no corpo (§9) — mesma conta para Juiz e jogador ── */
+
+export type AjusteCorpo = { canal: "vida" | "dor"; delta: number };
+
+/**
+ * Aplica dano/cura em Vida ou Dor. Dor fecha ciclo no 6º círculo: −1 V,
+ * consequência d6 e os círculos são apagados (p. 86–87); cada ciclo completo
+ * conta. `d6` é injetável para o servidor sortear.
+ */
+export function calcularAjusteCorpo(
+  estado: { nome: string; hp: number; maxHp: number; dor: number; condicoes: string[] },
+  ajuste: AjusteCorpo,
+  d6: () => number = () => 1 + Math.floor(Math.random() * 6),
+): { hp: number; dor: number; condicoes: string[]; texto: string } {
+  const condicoes = [...estado.condicoes];
+  const add = (c: string) => {
+    if (!condicoes.includes(c)) condicoes.push(c);
+  };
+  let hp = estado.hp;
+  let dor = estado.dor;
+  const partes: string[] = [];
+  const delta = Math.round(ajuste.delta);
+
+  if (ajuste.canal === "vida") {
+    const antes = hp;
+    hp = Math.max(0, Math.min(estado.maxHp, hp + delta));
+    partes.push(delta < 0 ? `${estado.nome} perdeu ${antes - hp} V` : `${estado.nome} recuperou ${hp - antes} V`);
+  } else {
+    dor = dor + delta;
+    if (delta < 0) {
+      dor = Math.max(0, dor);
+      partes.push(`${estado.nome} aliviou ${Math.abs(delta)} de Dor`);
+    } else {
+      partes.push(`${estado.nome} sofreu ${delta} de Dor`);
+      while (dor >= 6) {
+        const d = d6();
+        const cons = CONSEQUENCIA_DOR[d];
+        dor -= 6;
+        hp = Math.max(0, hp - 1);
+        add(cons.condicao);
+        partes.push(`6 de Dor: −1 V · d6 = ${d} → ${cons.texto}`);
+      }
+    }
+  }
+  if (hp === 0 && estado.hp > 0) {
+    add("Inconsciente");
+    partes.push("VIDA ZERADA: Livramento, Sina ou Teste de Morte");
+  }
+  const final = hp > 0 ? condicoes.filter((c) => c !== "Inconsciente") : condicoes;
+  partes.push(`(Vida ${hp}/${estado.maxHp} · Dor ${dor}/6)`);
+  return { hp, dor, condicoes: final, texto: partes.join(" — ") };
+}

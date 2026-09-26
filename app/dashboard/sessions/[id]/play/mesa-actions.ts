@@ -7,7 +7,7 @@ import { getProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase-server";
 import { drawCards } from "@/lib/rulesets/sacramento/generators";
 import {
-  CONSEQUENCIA_DOR,
+  calcularAjusteCorpo,
   maiorCarta,
   nomeCarta,
   ordenarIniciativa,
@@ -124,37 +124,18 @@ export async function ajustarFicha(
   let tipo: SessionEventType = "gm_note";
   let avisoJogador: string | null = null;
 
-  if ("vida" in ajuste) {
-    const antes = hp;
-    hp = Math.max(0, Math.min(c.max_hp, hp + Math.round(ajuste.vida)));
-    tipo = ajuste.vida < 0 ? "combat_damage" : "combat_heal";
-    texto = ajuste.vida < 0 ? `${c.name} perdeu ${antes - hp} V (${hp}/${c.max_hp})` : `${c.name} recuperou ${hp - antes} V (${hp}/${c.max_hp})`;
-    if (hp === 0 && antes > 0) {
-      texto += " — VIDA ZERADA: Livramento, Sina ou Teste de Morte";
-      addCond("Inconsciente");
-    }
-    if (hp > 0) condicoes = condicoes.filter((x) => x !== "Inconsciente");
-    avisoJogador = texto;
-  } else if ("dor" in ajuste) {
-    let dor = (typeof stats.dor === "number" ? (stats.dor as number) : 0) + Math.round(ajuste.dor);
-    tipo = ajuste.dor > 0 ? "combat_damage" : "combat_heal";
-    if (dor >= 6) {
-      // Ciclo de Dor (p. 86–87): risca 1 V, rola consequência, apaga os seis D.
-      const d = 1 + Math.floor(Math.random() * 6);
-      const cons = CONSEQUENCIA_DOR[d];
-      hp = Math.max(0, hp - 1);
-      dor = 0;
-      addCond(cons.condicao);
-      texto = `${c.name} completou 6 de Dor: −1 V (${hp}/${c.max_hp}) · d6 = ${d} → ${cons.texto}`;
-      if (hp === 0) {
-        texto += " — VIDA ZERADA";
-        addCond("Inconsciente");
-      }
-    } else {
-      dor = Math.max(0, dor);
-      texto = `${c.name}: Dor ${dor}/6`;
-    }
-    stats.dor = dor;
+  if ("vida" in ajuste || "dor" in ajuste) {
+    const canal = "vida" in ajuste ? "vida" : "dor";
+    const delta = "vida" in ajuste ? ajuste.vida : ajuste.dor;
+    const r = calcularAjusteCorpo(
+      { nome: c.name, hp, maxHp: c.max_hp, dor: typeof stats.dor === "number" ? (stats.dor as number) : 0, condicoes },
+      { canal, delta },
+    );
+    hp = r.hp;
+    stats.dor = r.dor;
+    condicoes = r.condicoes;
+    tipo = delta < 0 && canal === "vida" ? "combat_damage" : delta > 0 && canal === "dor" ? "combat_damage" : "combat_heal";
+    texto = r.texto;
     avisoJogador = texto;
   } else if ("saldo" in ajuste) {
     const atual = typeof stats.saldo === "number" ? (stats.saldo as number) : c.gold;

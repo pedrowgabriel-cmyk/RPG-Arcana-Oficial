@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { itemById, LOJAS, precoNaMesa } from "@/lib/character-creation/sacramento/catalogo";
 import { limitesComEconomia } from "@/lib/character-creation/sacramento/rules";
 import { economiaDaMesa, formatarReis } from "@/lib/rulesets/sacramento/economia";
-import { nomeCarta, rolar, type Rolagem, type TipoRolagem } from "@/lib/rulesets/sacramento/mesa";
+import { calcularAjusteCorpo, nomeCarta, rolar, type AjusteCorpo, type Rolagem, type TipoRolagem } from "@/lib/rulesets/sacramento/mesa";
 import type { Carta } from "@/lib/rulesets/sacramento/types";
 
 type InventarioItem = {
@@ -193,4 +193,44 @@ export async function usarSinaJogador(
     payload: { kind: "sina", texto: `${ctx.c.name} gastou a Sina ${nomeCarta(carta)}${motivo ? ` para ${motivo}` : ""}` },
   });
   return { ok: true };
+}
+
+/** O jogador registra dano/cura que tomou (Vida ou Dor). O Juiz vê no registro da mesa. */
+export async function ajustarMeuCorpo(
+  sessionId: string,
+  characterId: string,
+  ajuste: AjusteCorpo,
+): Promise<{ ok: true; texto: string } | { ok: false; error: string }> {
+  const ctx = await meuPersonagem(sessionId, characterId);
+  if (!ctx) return { ok: false, error: "Personagem não encontrado nesta mesa." };
+  if (!["vida", "dor"].includes(ajuste.canal)) return { ok: false, error: "Canal inválido." };
+  const delta = Math.round(ajuste.delta);
+  if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 30) return { ok: false, error: "Valor inválido." };
+
+  const { data: c } = await ctx.supabase
+    .from("characters")
+    .select("hp, max_hp, stats, conditions")
+    .eq("id", characterId)
+    .single<{ hp: number; max_hp: number; stats: Record<string, unknown> | null; conditions: string[] | null }>();
+  if (!c) return { ok: false, error: "Ficha não encontrada." };
+  const stats = { ...(c.stats ?? {}) };
+  const r = calcularAjusteCorpo(
+    { nome: ctx.c.name, hp: c.hp, maxHp: c.max_hp, dor: typeof stats.dor === "number" ? (stats.dor as number) : 0, condicoes: c.conditions ?? [] },
+    { canal: ajuste.canal, delta },
+  );
+  stats.dor = r.dor;
+  const { error } = await ctx.supabase
+    .from("characters")
+    .update({ hp: r.hp, stats, conditions: r.condicoes })
+    .eq("id", characterId);
+  if (error) return { ok: false, error: error.message };
+
+  await createAdminClient().from("session_events").insert({
+    session_id: sessionId,
+    actor_id: ctx.auth.user.id,
+    type: (ajuste.canal === "vida" && delta < 0) || (ajuste.canal === "dor" && delta > 0) ? "combat_damage" : "combat_heal",
+    is_public: true,
+    payload: { texto: `${r.texto} · registrado pelo jogador`, personagemId: characterId },
+  });
+  return { ok: true, texto: r.texto };
 }
