@@ -26,12 +26,14 @@ export function CombateJuiz({
   characters,
   npcs,
   setNpcs,
+  onChange,
 }: {
   sessionId: string;
   iniciativa: Iniciativa | null;
   characters: Character[];
   npcs: (NpcCombate & { qtd: number })[];
   setNpcs: (n: (NpcCombate & { qtd: number })[]) => void;
+  onChange: () => void;
 }) {
   const [pending, start] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export function CombateJuiz({
       setErro(null);
       const r = await fn();
       if (!r.ok) setErro(r.error ?? "Erro");
+      onChange();
     });
 
   function sacar() {
@@ -95,6 +98,7 @@ export function CombateJuiz({
       });
       if (r.ok) setResultado(r.rolagem);
       else setErro(r.error);
+      onChange();
     });
   }
 

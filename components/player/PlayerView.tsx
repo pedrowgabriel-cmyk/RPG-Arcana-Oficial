@@ -63,6 +63,66 @@ export function PlayerView({
     if (data) setCharacter(data);
   }, [supabase, character.id]);
 
+  // Sempre busca a linha inteira: o pacote do realtime pode vir sem colunas grandes.
+  const refetchSession = useCallback(async () => {
+    const { data } = await supabase.from("sessions").select("*").eq("id", session.id).maybeSingle<Session>();
+    if (data) setSession(data);
+  }, [supabase, session.id]);
+
+  const refetchMedia = useCallback(async () => {
+    const { data } = await supabase
+      .from("session_media_state")
+      .select("*")
+      .eq("session_id", session.id)
+      .maybeSingle<SessionMediaState>();
+    if (data) setMediaState(data);
+  }, [supabase, session.id]);
+
+  const refetchFeed = useCallback(async () => {
+    const [n, e] = await Promise.all([
+      supabase
+        .from("notifications")
+        .select("*")
+        .eq("session_id", session.id)
+        .or(`target_id.eq.${userId},target_id.is.null`)
+        .order("created_at", { ascending: false })
+        .limit(50),
+      supabase
+        .from("session_events")
+        .select("*")
+        .eq("session_id", session.id)
+        .eq("is_public", true)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
+    if (n.data) setNotifications(n.data as Notification[]);
+    if (e.data) setPublicEvents(e.data as SessionEvent[]);
+  }, [supabase, session.id, userId]);
+
+  const refetchTudo = useCallback(async () => {
+    await Promise.all([refetchSession(), refetchCharacter(), refetchMedia(), refetchFeed()]);
+  }, [refetchSession, refetchCharacter, refetchMedia, refetchFeed]);
+
+  // Rede de segurança do tempo real: ao voltar para a tela (celular que apagou,
+  // aba em segundo plano, rede que caiu) e a cada 4 s com a tela visível.
+  useEffect(() => {
+    const aoVoltar = () => {
+      if (document.visibilityState === "visible") void refetchTudo();
+    };
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener("focus", aoVoltar);
+    window.addEventListener("online", aoVoltar);
+    const t = setInterval(aoVoltar, 4000);
+    return () => {
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener("focus", aoVoltar);
+      window.removeEventListener("online", aoVoltar);
+      clearInterval(t);
+    };
+  }, [refetchTudo]);
+
+  const [canalVersao, setCanalVersao] = useState(0);
+
   const refetchPlayers = useCallback(async () => {
     const { data } = await supabase
       .from("session_players")
@@ -94,6 +154,7 @@ export function PlayerView({
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
+    void supabase.from("notifications").update({ read: true }).eq("id", id);
   }
 
   // Redirect on finish
@@ -106,7 +167,7 @@ export function PlayerView({
   // Realtime subscriptions
   useEffect(() => {
     const channel = supabase
-      .channel(`player-view-${session.id}`)
+      .channel(`player-view-${session.id}-${canalVersao}`)
       .on(
         "postgres_changes",
         {
@@ -115,8 +176,8 @@ export function PlayerView({
           table: "sessions",
           filter: `id=eq.${session.id}`,
         },
-        (payload) => {
-          if (payload.new) setSession(payload.new as Session);
+        () => {
+          void refetchSession();
         }
       )
       .on(
@@ -196,7 +257,13 @@ export function PlayerView({
           setPublicEvents((prev) => [ev, ...prev].slice(0, 50));
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") void refetchTudo();
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          // Reconecta com um canal novo em 2 s.
+          setTimeout(() => setCanalVersao((v) => v + 1), 2000);
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -208,6 +275,9 @@ export function PlayerView({
     userId,
     refetchCharacter,
     refetchPlayers,
+    refetchSession,
+    refetchTudo,
+    canalVersao,
   ]);
 
   // Sacramento: mesa própria (Vida/Dor/Sina, cartas, rolagens no servidor).
@@ -220,6 +290,7 @@ export function PlayerView({
         notifications={notifications}
         publicEvents={publicEvents}
         onMarkRead={markRead}
+        onRefresh={() => void refetchTudo()}
       />
     );
   }

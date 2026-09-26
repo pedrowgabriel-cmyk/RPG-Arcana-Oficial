@@ -46,6 +46,7 @@ export function MesaDoJogador({
   notifications,
   publicEvents,
   onMarkRead,
+  onRefresh = () => {},
 }: {
   session: Session;
   character: Character;
@@ -53,6 +54,8 @@ export function MesaDoJogador({
   notifications: Notification[];
   publicEvents: SessionEvent[];
   onMarkRead: (id: string) => void;
+  /** Busca a ficha/mesa de novo logo após uma ação (não espera o eco do realtime). */
+  onRefresh?: () => void;
 }) {
   const f = fichaMesa(character);
   const cena = cenaDaMesa(session.settings);
@@ -176,7 +179,7 @@ export function MesaDoJogador({
               )}
 
               <PainelCorpo character={character} onAjuste={setAjuste} />
-              <PainelSinaBolso sessionId={session.id} character={character} />
+              <PainelSinaBolso sessionId={session.id} character={character} onRefresh={onRefresh} />
 
               {iniciativa && (
                 <section className={`${PAINEL} space-y-2 p-4`}>
@@ -259,16 +262,16 @@ export function MesaDoJogador({
             <div className="pt-4">
               {aba === "ficha" && <FichaAba character={character} />}
               {aba === "historia" && <HistoriaAba character={character} story={story} />}
-              {aba === "rolar" && <RolarAba sessionId={session.id} character={character} />}
+              {aba === "rolar" && <RolarAba sessionId={session.id} character={character} onRefresh={onRefresh} />}
               {aba === "alforje" && <AlforjeAba character={character} onArmazem={() => setAba("armazem")} />}
-              {aba === "armazem" && <ArmazemDoJogo session={session} character={character} />}
+              {aba === "armazem" && <ArmazemDoJogo session={session} character={character} onDone={onRefresh} />}
               {aba === "mesa" && <MesaAba notifications={notifications} events={publicEvents} onMarkRead={onMarkRead} />}
             </div>
           </section>
         </div>
       </div>
 
-      {ajuste && <SheetAjuste sessionId={session.id} character={character} modo={ajuste} onClose={() => setAjuste(null)} />}
+      {ajuste && <SheetAjuste sessionId={session.id} character={character} modo={ajuste} onClose={() => setAjuste(null)} onRefresh={onRefresh} />}
     </div>
   );
 }
@@ -365,11 +368,13 @@ function SheetAjuste({
   character,
   modo,
   onClose,
+  onRefresh,
 }: {
   sessionId: string;
   character: Character;
   modo: "dano" | "cura";
   onClose: () => void;
+  onRefresh: () => void;
 }) {
   const f = fichaMesa(character);
   const [canal, setCanal] = useState<"vida" | "dor">("vida");
@@ -396,6 +401,7 @@ function SheetAjuste({
         setErro(r.error);
         return;
       }
+      onRefresh();
       onClose();
     });
   }
@@ -467,7 +473,7 @@ function SheetAjuste({
 
 const MOTIVOS_SINA = ["refazer um teste", "evitar o Teste de Morte", "reanimar (até 1 rodada)", "trocar carta no duelo"];
 
-function PainelSinaBolso({ sessionId, character }: { sessionId: string; character: Character }) {
+function PainelSinaBolso({ sessionId, character, onRefresh }: { sessionId: string; character: Character; onRefresh: () => void }) {
   const f = fichaMesa(character);
   const [escolhida, setEscolhida] = useState<number | null>(null);
   const [pending, start] = useTransition();
@@ -508,6 +514,7 @@ function PainelSinaBolso({ sessionId, character }: { sessionId: string; characte
                       const r = await usarSinaJogador(sessionId, character.id, escolhida, m);
                       setErro(r.ok ? null : r.error);
                       setEscolhida(null);
+                      onRefresh();
                     })
                   }
                   className="rounded-full border border-arcana-gold/60 px-2.5 py-1 font-crimson text-sm text-arcana-gold-bright hover:bg-arcana-gold/10"
@@ -685,7 +692,7 @@ function HistoriaAba({ character, story }: { character: Character; story: Histor
   );
 }
 
-function RolarAba({ sessionId, character }: { sessionId: string; character: Character }) {
+function RolarAba({ sessionId, character, onRefresh }: { sessionId: string; character: Character; onRefresh: () => void }) {
   const f = fichaMesa(character);
   const [tipo, setTipo] = useState<TipoRolagem>("teste");
   const [base, setBase] = useState<string>("violencia");
@@ -707,8 +714,10 @@ function RolarAba({ sessionId, character }: { sessionId: string; character: Char
         mod: usaBase ? valorBase + extra : 0,
         na: usaBase ? na : null,
       });
-      if (r.ok) setRes(r.rolagem);
-      else setErro(r.error);
+      if (r.ok) {
+        setRes(r.rolagem);
+        onRefresh();
+      } else setErro(r.error);
     });
   }
 

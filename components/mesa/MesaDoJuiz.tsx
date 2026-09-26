@@ -56,21 +56,61 @@ export function MesaDoJuiz({
     if (data) setCharacters((data as Character[]).filter((c) => c.owner_id !== session.gm_id));
   }, [supabase, session.id, session.gm_id]);
 
+  const refetchSession = useCallback(async () => {
+    const { data } = await supabase.from("sessions").select("*").eq("id", session.id).maybeSingle<Session>();
+    if (data) setSession(data);
+  }, [supabase, session.id]);
+
+  const refetchEvents = useCallback(async () => {
+    const { data } = await supabase
+      .from("session_events")
+      .select("*")
+      .eq("session_id", session.id)
+      .order("created_at", { ascending: false })
+      .limit(80);
+    if (data) setEvents(data as SessionEvent[]);
+  }, [supabase, session.id]);
+
+  /** Chamado depois de toda ação do Juiz — não espera o eco do realtime. */
+  const refetchTudo = useCallback(async () => {
+    await Promise.all([refetchChars(), refetchSession(), refetchEvents()]);
+  }, [refetchChars, refetchSession, refetchEvents]);
+
+  const [canalVersao, setCanalVersao] = useState(0);
+
   useEffect(() => {
     const ch = supabase
-      .channel(`mesa-juiz-${session.id}`)
+      .channel(`mesa-juiz-${session.id}-${canalVersao}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "characters", filter: `session_id=eq.${session.id}` }, () => void refetchChars())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "session_events", filter: `session_id=eq.${session.id}` }, (p) =>
-        setEvents((prev) => [p.new as SessionEvent, ...prev].slice(0, 200)),
+        setEvents((prev) => (prev.some((e) => e.id === (p.new as SessionEvent).id) ? prev : [p.new as SessionEvent, ...prev].slice(0, 200))),
       )
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sessions", filter: `id=eq.${session.id}` }, (p) =>
-        setSession((s) => ({ ...s, ...(p.new as Session) })),
-      )
-      .subscribe();
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sessions", filter: `id=eq.${session.id}` }, () => void refetchSession())
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") void refetchTudo();
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setTimeout(() => setCanalVersao((v) => v + 1), 2000);
+      });
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [supabase, session.id, refetchChars]);
+  }, [supabase, session.id, refetchChars, refetchSession, refetchTudo, canalVersao]);
+
+  // Rede de segurança: ao voltar para a aba e a cada 4 s com a tela visível.
+  useEffect(() => {
+    const aoVoltar = () => {
+      if (document.visibilityState === "visible") void refetchTudo();
+    };
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener("focus", aoVoltar);
+    window.addEventListener("online", aoVoltar);
+    const t = setInterval(aoVoltar, 4000);
+    return () => {
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener("focus", aoVoltar);
+      window.removeEventListener("online", aoVoltar);
+      clearInterval(t);
+    };
+  }, [refetchTudo]);
 
   const economia = nivelEconomia(economiaDaMesa(session.settings).id);
   const cena = cenaDaMesa(session.settings);
@@ -85,19 +125,20 @@ export function MesaDoJuiz({
     });
   }
 
-  const colBando = <BandoJuiz sessionId={session.id} characters={characters} jogadores={jogadores} />;
+  const colBando = <BandoJuiz sessionId={session.id} characters={characters} jogadores={jogadores} onChange={() => void refetchTudo()} />;
   const colCena = (
     <CenaJuiz
       sessionId={session.id}
       cenaAtual={cena}
       elementos={elementos}
+      onChange={() => void refetchTudo()}
       onNpcCombate={(n) => {
         setNpcs((prev) => (prev.some((x) => x.id === n.id) ? prev : [...prev, { ...n, qtd: 1 }]));
         setAba("combate");
       }}
     />
   );
-  const colCombate = <CombateJuiz sessionId={session.id} iniciativa={iniciativa} characters={characters} npcs={npcs} setNpcs={setNpcs} />;
+  const colCombate = <CombateJuiz sessionId={session.id} iniciativa={iniciativa} characters={characters} npcs={npcs} setNpcs={setNpcs} onChange={() => void refetchTudo()} />;
   const colLog = (
     <ul className="space-y-1.5">
       {events.map((e) => (
@@ -196,7 +237,7 @@ export function MesaDoJuiz({
               <h2 className="arcana-heading text-xl tracking-[0.12em]">Economia da mesa</h2>
               <button type="button" onClick={() => setEconomiaAberta(false)} className="arcana-btn-ghost arcana-btn-sm">Fechar</button>
             </div>
-            <ReguaEconomia sessionId={session.id} nivelAtualId={economia.id} compacto />
+            <ReguaEconomia sessionId={session.id} nivelAtualId={economia.id} onChange={() => void refetchTudo()} compacto />
           </div>
         </div>
       )}

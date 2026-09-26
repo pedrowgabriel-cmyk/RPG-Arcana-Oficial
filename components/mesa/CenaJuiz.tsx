@@ -32,11 +32,13 @@ export function CenaJuiz({
   cenaAtual,
   elementos,
   onNpcCombate,
+  onChange,
 }: {
   sessionId: string;
   cenaAtual: CenaAtual | null;
   elementos: CampaignElement[];
   onNpcCombate: (n: NpcCombate) => void;
+  onChange: () => void;
 }) {
   const [pending, start] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export function CenaJuiz({
       setErro(null);
       const r = await definirCena(sessionId, cena);
       if (!r.ok) setErro(r.error);
+      onChange();
     });
 
   return (

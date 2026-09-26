@@ -16,11 +16,13 @@ function CartaoPJ({
   character,
   jogador,
   onMsg,
+  onChange,
 }: {
   sessionId: string;
   character: Character;
   jogador: string;
   onMsg: (m: { ok: boolean; texto: string }) => void;
+  onChange: () => void;
 }) {
   const f = fichaMesa(character);
   const [pending, start] = useTransition();
@@ -32,6 +34,7 @@ function CartaoPJ({
     start(async () => {
       const r = await ajustarFicha(sessionId, character.id, a);
       onMsg(r.ok ? { ok: true, texto: r.texto } : { ok: false, texto: r.error });
+      onChange();
     });
 
   return (
@@ -156,10 +159,12 @@ export function BandoJuiz({
   sessionId,
   characters,
   jogadores,
+  onChange,
 }: {
   sessionId: string;
   characters: Character[];
   jogadores: Record<string, string>;
+  onChange: () => void;
 }) {
   const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
   return (
@@ -173,7 +178,7 @@ export function BandoJuiz({
         <p className="font-crimson text-base text-arcana-text">Nenhum personagem vinculado a esta mesa ainda.</p>
       )}
       {characters.map((c) => (
-        <CartaoPJ key={c.id} sessionId={sessionId} character={c} jogador={jogadores[c.owner_id] ?? "Jogador"} onMsg={setMsg} />
+        <CartaoPJ key={c.id} sessionId={sessionId} character={c} jogador={jogadores[c.owner_id] ?? "Jogador"} onMsg={setMsg} onChange={onChange} />
       ))}
     </div>
   );

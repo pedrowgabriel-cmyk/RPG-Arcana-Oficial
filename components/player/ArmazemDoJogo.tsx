@@ -17,7 +17,15 @@ import type { Character, Session } from "@/lib/types";
  * Armazém da partida (Sacramento). Os preços seguem a economia VIGENTE da mesa,
  * que chega em tempo real pela session — se o Juiz mexer na régua, o balcão muda na hora.
  */
-export function ArmazemDoJogo({ session, character }: { session: Session; character: Character }) {
+export function ArmazemDoJogo({
+  session,
+  character,
+  onDone,
+}: {
+  session: Session;
+  character: Character;
+  onDone?: () => void;
+}) {
   const limites = useMemo(() => limitesComEconomia(session.settings), [session.settings]);
   const economia = economiaDaMesa(session.settings);
   const mult = limites.multiplicadorPrecos;
@@ -65,6 +73,7 @@ export function ArmazemDoJogo({ session, character }: { session: Session; charac
         return;
       }
       setQtd((prev) => ({ ...prev, [item.id]: 1 }));
+      onDone?.();
       setMsg({ ok: true, texto: `${q}× ${item.nome} no alforje por ${formatarReis(r.pago)}. Sobrou ${formatarReis(r.saldo)}.` });
     });
   }
