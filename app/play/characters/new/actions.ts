@@ -15,6 +15,7 @@ import type {
 import { baseId } from "@/lib/character-creation/sacramento/bases";
 import { characterImagePath } from "@/lib/character-creation/sacramento/kits";
 import { calcularDerivados, limitesComEconomia, validarFicha, XP_POR_NIVEL } from "@/lib/character-creation/sacramento/rules";
+import { palavrasDoJogador, reconciliarHistoria } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 import { contarParrudeza } from "@/lib/character-creation/sacramento/habilidades";
 import { itemById, precoNaMesa, resumoCompras } from "@/lib/character-creation/sacramento/catalogo";
 
@@ -35,7 +36,8 @@ export type CreateSacramentoPayload = {
 };
 
 /** Compila a história estruturada num texto corrido para a coluna backstory. */
-function renderBackstory(h: HistoriaEstruturada): string {
+function renderBackstory(h: HistoriaEstruturada, e?: ElementosHistoria): string {
+  const doJogador = palavrasDoJogador(e);
   const partes = [
     h.resumo,
     ...h.capitulos.map((c) => `## ${c.titulo}\n${c.texto}`),
@@ -48,7 +50,12 @@ function renderBackstory(h: HistoriaEstruturada): string {
     `## Trilha de Redenção — ${h.redencao.trilhaNome}\n${h.redencao.premissa}\n${h.redencao.passos
       .map((p, i) => `${i + 1}. ${p}${i === 5 ? " (encerramento)" : ""}`)
       .join("\n")}`,
-    h.ganchos.length > 0 ? `## Pontas soltas\n${h.ganchos.map((g) => `- ${g}`).join("\n")}` : null,
+    h.ganchos.filter(Boolean).length > 0
+      ? `## Pontas soltas\n${h.ganchos.filter(Boolean).map((g) => `- ${g}`).join("\n")}`
+      : null,
+    doJogador.length > 0
+      ? `## Nas palavras do jogador\n${doJogador.map((l) => `- ${l.rotulo}: ${l.texto}`).join("\n")}`
+      : null,
   ];
   return partes.filter(Boolean).join("\n\n");
 }
@@ -76,6 +83,10 @@ export async function createSacramentoCharacter(
   const name = payload.name?.trim();
   if (!name || name.length < 2) {
     return { ok: false, error: "Nome do personagem é obrigatório" };
+  }
+  // Esboço automático que ficou velho é refeito com as respostas finais do jogador.
+  if (payload.historia && payload.elementos) {
+    payload.historia = reconciliarHistoria(payload.historia, payload.elementos);
   }
   if (!payload.historia || payload.historia.redencao?.passos?.length !== 6) {
     return { ok: false, error: "História incompleta — a trilha de redenção precisa de 6 passos" };
@@ -190,7 +201,7 @@ export async function createSacramentoCharacter(
     skills: { antecedentes: ficha.antecedentes, habilidades: ficha.habilidades },
     inventory: inventario,
     spells: [],
-    backstory: renderBackstory(payload.historia),
+    backstory: renderBackstory(payload.historia, payload.elementos),
     notes: "",
     // O close gerado na forja é o retrato de qualidade do Hub; sem forja, cai no kit estático.
     avatar_url: payload.imagens?.close ?? characterImagePath(payload.base, payload.kitId),

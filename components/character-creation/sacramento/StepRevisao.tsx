@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { reconciliarHistoria } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 import { HowItWorks } from "@/components/campaign-creation/Explainer";
 import { PLAYER_GUIDES } from "@/lib/character-creation/sacramento/guidance";
 import { habilidadeById, contarParrudeza } from "@/lib/character-creation/sacramento/habilidades";
@@ -151,6 +152,14 @@ export default function StepRevisao({
 
   const elementos = data.elementos ?? ELEMENTOS_VAZIOS;
   const ficha = data.ficha ?? FICHA_INICIAL;
+
+  // Esboço manual montado antes de o jogador mudar as respostas: atualiza os
+  // trechos automáticos (origem, ocupação, família) com o que vale agora.
+  useEffect(() => {
+    if (!modoManual || !historia) return;
+    const atualizada = reconciliarHistoria(historia, elementos);
+    if (JSON.stringify(atualizada) !== JSON.stringify(historia)) onUpdate({ historia: atualizada });
+  }, [modoManual, historia, elementos, onUpdate]);
   const derivados = calcularDerivados(ficha, contarParrudeza(ficha.habilidades));
   const validacao = validarFicha(ficha, limites?.dinheiroInicial, limites);
   const compras = resumoCompras(ficha.compras ?? [], limites?.dinheiroInicial, limites?.multiplicadorPrecos ?? 1);

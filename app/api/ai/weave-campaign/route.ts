@@ -12,6 +12,7 @@ import { SACRAMENTO_PLACES } from "@/lib/rulesets/sacramento/places";
 import { SACRAMENTO_FACTIONS } from "@/lib/rulesets/sacramento/factions";
 import { WEAVE_SCHEMA, sanitizeWoven } from "@/lib/rulesets/sacramento/weave";
 import { economiaDaMesa } from "@/lib/rulesets/sacramento/economia";
+import { palavrasDoJogador } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 
 // A campanha inteira sai numa chamada só — pode levar alguns minutos.
 export const maxDuration = 300;
@@ -67,6 +68,9 @@ function resumoPersonagem(c: PartyCharacter, jogador: string): string {
     e?.ocupacao && `Ocupação: ${e.ocupacao}`,
     faccao && `Facção: ${faccao}`,
     e?.passadoSombrio && e.passadoDetalhe && `Passado sombrio: ${e.passadoDetalhe}`,
+    // As respostas do jogador valem mais que o esboço da história, se divergirem.
+    palavrasDoJogador(e).length > 0 &&
+      `Nas palavras do jogador (prioridade máxima): ${palavrasDoJogador(e).map((l) => `${l.rotulo}: ${l.texto}`).join(" | ")}`,
   ];
   if (h) {
     linhas.push(

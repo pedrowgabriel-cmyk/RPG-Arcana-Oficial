@@ -6,6 +6,7 @@ import type { HistoriaEstruturada, ElementosHistoria } from "@/lib/character-cre
 import { ANTECEDENTES, ATRIBUTOS } from "@/lib/character-creation/sacramento/rules";
 import { habilidadeById } from "@/lib/character-creation/sacramento/habilidades";
 import { labelClass } from "./ui";
+import { palavrasDoJogador } from "@/lib/character-creation/sacramento/palavras-do-jogador";
 
 type Stats = {
   saldo?: number;
@@ -25,7 +26,7 @@ const DERIVADOS: [string, string][] = [
   ["cartasIniciativa", "Cartas de iniciativa"],
 ];
 
-const ABAS = ["Retratos", "Ficha", "História"] as const;
+const ABAS = ["História", "Retratos", "Ficha"] as const;
 type Aba = (typeof ABAS)[number];
 
 function Bloco({ titulo, children }: { titulo: string; children: React.ReactNode }) {
@@ -51,7 +52,7 @@ export function CharacterDossier({
   playerName: string;
   onClose: () => void;
 }) {
-  const [aba, setAba] = useState<Aba>("Retratos");
+  const [aba, setAba] = useState<Aba>("História");
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -194,19 +195,26 @@ export function CharacterDossier({
             </>
           )}
 
+          {aba === "História" && palavrasDoJogador(elementos).length > 0 && (
+            <section className="space-y-2 rounded-xl border border-arcana-gold/40 bg-arcana-gold/[0.06] p-4">
+              <p className={labelClass}>Nas palavras do jogador</p>
+              <dl className="space-y-2">
+                {palavrasDoJogador(elementos).map((l) => (
+                  <div key={l.rotulo}>
+                    <dt className="font-cinzel text-[10px] uppercase tracking-[0.2em] text-arcana-gold-bright">{l.rotulo}</dt>
+                    <dd className="whitespace-pre-line font-crimson text-base leading-relaxed text-arcana-text">{l.texto}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
+
           {aba === "História" &&
             (!historia ? (
               <Texto>{character.backstory || "Sem história registrada."}</Texto>
             ) : (
               <>
-                {elementos?.conceito && (
-                  <Bloco titulo="Conceito">
-                    <Texto>
-                      {elementos.conceito}
-                      {elementos.origem ? ` — de ${elementos.origem}` : ""}
-                    </Texto>
-                  </Bloco>
-                )}
+                <p className={labelClass}>História montada na criação</p>
                 <Bloco titulo="Resumo">
                   <Texto>{historia.resumo}</Texto>
                 </Bloco>
