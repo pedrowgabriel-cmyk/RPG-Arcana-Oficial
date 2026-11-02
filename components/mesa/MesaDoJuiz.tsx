@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { updateStatus } from "@/app/dashboard/sessions/[id]/actions";
@@ -9,6 +9,7 @@ import { ReguaEconomia } from "@/components/campaign-story/ReguaEconomia";
 import { economiaDaMesa, nivelEconomia } from "@/lib/rulesets/sacramento/economia";
 import { cenaDaMesa, iniciativaDaMesa } from "@/lib/rulesets/sacramento/mesa";
 import { numeroSessao, sessaoAberta, sessoesDaMesa } from "@/lib/sessoes-de-jogo";
+import { MapaDinamico } from "@/components/mapa/MapaDinamico";
 import { ConfirmarAcao } from "./ConfirmarAcao";
 import type { CampaignElement, Character, Session, SessionEvent } from "@/lib/types";
 import { BandoJuiz } from "./BandoJuiz";
@@ -16,7 +17,22 @@ import { CenaJuiz, type NpcCombate } from "./CenaJuiz";
 import { CombateJuiz } from "./CombateJuiz";
 import { textoEvento } from "./pecas";
 
-type Aba = "bando" | "cena" | "combate" | "log";
+type Aba = "bando" | "mapa" | "cena" | "combate" | "log";
+
+const TELA_GRANDE = "(min-width: 1024px)";
+
+/** Uma cena 3D só por vez: o mapa não pode montar nos dois layouts. */
+function useTelaGrande() {
+  return useSyncExternalStore(
+    (avisar) => {
+      const m = window.matchMedia(TELA_GRANDE);
+      m.addEventListener("change", avisar);
+      return () => m.removeEventListener("change", avisar);
+    },
+    () => window.matchMedia(TELA_GRANDE).matches,
+    () => false,
+  );
+}
 
 function Coluna({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
@@ -49,6 +65,7 @@ export function MesaDoJuiz({
   const [events, setEvents] = useState(initialEvents);
   const [aba, setAba] = useState<Aba>("bando");
   const [economiaAberta, setEconomiaAberta] = useState(false);
+  const telaGrande = useTelaGrande();
   const [npcs, setNpcs] = useState<(NpcCombate & { qtd: number })[]>([]);
   const [pending, start] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
@@ -130,6 +147,7 @@ export function MesaDoJuiz({
   }
 
   const colBando = <BandoJuiz sessionId={session.id} characters={characters} jogadores={jogadores} onChange={() => void refetchTudo()} />;
+  const colMapa = <MapaDinamico sessionId={session.id} bando={characters.map((c) => ({ id: c.id, nome: c.name }))} juiz embutido />;
   const colCena = (
     <CenaJuiz
       sessionId={session.id}
@@ -193,28 +211,34 @@ export function MesaDoJuiz({
 
       {/* Abas no celular */}
       <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-arcana-border-dim px-3 py-2 lg:hidden">
-        {(["bando", "cena", "combate", "log"] as Aba[]).map((a) => (
+        {(["bando", "mapa", "cena", "combate", "log"] as Aba[]).map((a) => (
           <button
             key={a}
             type="button"
             onClick={() => setAba(a)}
             className={`shrink-0 rounded-xl px-3 py-1.5 font-cinzel text-[11px] uppercase tracking-[0.18em] ${aba === a ? "bg-arcana-gold font-bold text-arcana-bg" : "text-arcana-text"}`}
           >
-            {{ bando: "Bando", cena: "Cena", combate: "Combate", log: "Registro" }[a]}
+            {{ bando: "Bando", mapa: "Mapa", cena: "Cena", combate: "Combate", log: "Registro" }[a]}
           </button>
         ))}
       </nav>
 
       <main className="min-h-0 flex-1 overflow-y-auto p-3 lg:hidden">
         {aba === "bando" && colBando}
+        {aba === "mapa" && !telaGrande && colMapa}
         {aba === "cena" && colCena}
         {aba === "combate" && colCombate}
         {aba === "log" && colLog}
       </main>
 
-      <main className="hidden min-h-0 flex-1 gap-4 p-4 lg:grid lg:grid-cols-[1.15fr_1fr_1fr]">
+      <main className="hidden min-h-0 flex-1 gap-4 p-4 lg:grid lg:grid-cols-[1fr_1.5fr_1fr]">
         <Coluna titulo={`Bando (${characters.length})`}>{colBando}</Coluna>
-        <Coluna titulo="Cena">{colCena}</Coluna>
+        <section className="flex min-h-0 flex-col gap-3">
+          <div className="min-h-0 flex-[3]">{telaGrande && colMapa}</div>
+          <div className="min-h-0 flex-[2]">
+            <Coluna titulo="Cena">{colCena}</Coluna>
+          </div>
+        </section>
         <section className="flex min-h-0 flex-col gap-3">
           <div className="min-h-0 flex-[3]">
             <Coluna titulo="Combate e dados">{colCombate}</Coluna>

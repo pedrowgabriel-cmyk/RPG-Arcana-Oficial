@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { ajustarMeuCorpo, rolarTesteJogador, usarSinaJogador } from "@/app/play/[session_id]/actions";
+import { MapaDinamico } from "@/components/mapa/MapaDinamico";
 import { ArmazemDoJogo } from "@/components/player/ArmazemDoJogo";
 import { ANTECEDENTES, ATRIBUTOS } from "@/lib/character-creation/sacramento/rules";
 import { habilidadeById } from "@/lib/character-creation/sacramento/habilidades";
@@ -70,6 +71,7 @@ export function MesaDoJogador({
   const naoLidas = notifications.filter((n) => !n.read).length;
   const story = ((character as unknown as { story?: Historia }).story ?? {}) as Historia;
   const [aba, setAba] = useState<Aba>("ficha");
+  const [mapaAberto, setMapaAberto] = useState(false);
   const [ajuste, setAjuste] = useState<"dano" | "cura" | null>(null);
 
   // Clarão vermelho/verde quando a Vida muda (dano do Juiz ou do próprio jogador).
@@ -277,7 +279,22 @@ export function MesaDoJogador({
                   {a.id === "mesa" && naoLidas > 0 && <span className="ml-1 rounded-full bg-red-500 px-1.5 text-[10px] text-white">{naoLidas}</span>}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setMapaAberto(true)}
+                className="relative shrink-0 rounded-xl px-3.5 py-2 font-cinzel text-[11px] uppercase tracking-[0.15em] text-arcana-text transition-colors hover:text-arcana-gold-bright"
+              >
+                Mapa
+              </button>
             </nav>
+
+            {mapaAberto && (
+              <MapaDinamico
+                sessionId={session.id}
+                eu={{ id: character.id, nome: character.name }}
+                onFechar={() => setMapaAberto(false)}
+              />
+            )}
 
             <div className="pt-4">
               {aba === "ficha" && <FichaAba character={character} />}

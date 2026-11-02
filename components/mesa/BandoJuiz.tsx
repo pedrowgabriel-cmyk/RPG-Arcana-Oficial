@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ajustarFicha, darItem, type AjusteFicha } from "@/app/dashboard/sessions/[id]/play/mesa-actions";
+import { ajustarFicha, ajustarItem, darItem, type AjusteFicha } from "@/app/dashboard/sessions/[id]/play/mesa-actions";
 import { CAUSAS_DANO, type CausaDano } from "@/lib/rulesets/sacramento/efeitos";
-import { lerInventario } from "@/lib/rulesets/sacramento/inventario";
+import { lerInventario, type ItemInventario } from "@/lib/rulesets/sacramento/inventario";
 import { CharacterDossier } from "@/components/campaign-story/CharacterDossier";
 import { fichaMesa, nomeCarta } from "@/lib/rulesets/sacramento/mesa";
 import type { Character, PartyCharacter } from "@/lib/types";
@@ -38,7 +38,7 @@ function CartaoPJ({
   const [pending, start] = useTransition();
   const [aberto, setAberto] = useState(false);
   const [dossie, setDossie] = useState(false);
-  const [painel, setPainel] = useState<Painel | null>(null);
+  const [painel, setPainel] = useState<Painel | null>("itens");
   const [causa, setCausa] = useState<CausaDano | undefined>(undefined);
   const inv = lerInventario(character.inventory);
 
@@ -52,6 +52,13 @@ function CartaoPJ({
   const dar = (itemId: string, quantidade: number, balas?: number) =>
     start(async () => {
       const r = await darItem(sessionId, character.id, itemId, quantidade, balas);
+      onMsg(r.ok ? { ok: true, texto: r.texto } : { ok: false, texto: r.error });
+      onChange();
+    });
+
+  const ajustar = (indice: number, item: ItemInventario, delta: number | "tudo") =>
+    start(async () => {
+      const r = await ajustarItem(sessionId, character.id, indice, item.id ?? item.nome ?? "", delta);
       onMsg(r.ok ? { ok: true, texto: r.texto } : { ok: false, texto: r.error });
       onChange();
     });
@@ -145,7 +152,7 @@ function CartaoPJ({
           <Ladrilhos ficha={f} itens={inv.length} aberto={painel} onAbrir={setPainel} />
           {painel === "dinheiro" && <PainelDinheiro saldo={f.saldo} pending={pending} aplicar={aplicar} />}
           {painel === "xp" && <PainelXp xp={f.xp} pending={pending} aplicar={aplicar} />}
-          {painel === "itens" && <PainelItens inventario={inv} pending={pending} onDar={dar} />}
+          {painel === "itens" && <PainelItens inventario={inv} pending={pending} onDar={dar} onAjustar={ajustar} />}
           {painel === "estado" && <PainelEstado ficha={f} pending={pending} aplicar={aplicar} />}
           {painel === "ficha" && <PainelFicha ficha={f} onDossie={() => setDossie(true)} />}
         </div>

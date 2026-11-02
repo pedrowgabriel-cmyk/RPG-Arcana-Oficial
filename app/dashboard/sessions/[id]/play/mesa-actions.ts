@@ -22,7 +22,7 @@ import type { Carta } from "@/lib/rulesets/sacramento/types";
 import { itemById } from "@/lib/character-creation/sacramento/catalogo";
 import { causaValida, type CausaDano, type Efeito } from "@/lib/rulesets/sacramento/efeitos";
 import { usoDoItem } from "@/lib/rulesets/sacramento/itens-uso";
-import { NOME_CALIBRE, ajustarCaixa, balasDaCaixa, lerInventario, type ItemInventario } from "@/lib/rulesets/sacramento/inventario";
+import { NOME_CALIBRE, ajustarCaixa, ajustarLinha, balasDaCaixa, lerInventario, nomeDoItem, type ItemInventario } from "@/lib/rulesets/sacramento/inventario";
 import type { SessionEventType } from "@/lib/types";
 
 type R<T = unknown> = ({ ok: true } & T) | { ok: false; error: string };
@@ -132,6 +132,45 @@ export async function darItem(
   const { error } = await ctx.supabase.from("characters").update({ inventory: inv }).eq("id", c.id);
   if (error) return { ok: false, error: error.message };
   await evento(ctx.supabase, sessionId, ctx.userId, "item_given", { texto, personagemId: c.id, itemId: item.id }, true, ctx.sessao.current_round);
+  await avisar(ctx.supabase, sessionId, c.owner_id, c.name, texto);
+  return { ok: true, texto };
+}
+
+/**
+ * Mexe numa linha do inventário. `chave` confere que a linha ainda é o mesmo
+ * item: o jogador pode ter gasto ou comprado algo enquanto o Juiz olhava a lista.
+ */
+export async function ajustarItem(
+  sessionId: string,
+  characterId: string,
+  indice: number,
+  chave: string,
+  delta: number | "tudo",
+): Promise<R<{ texto: string }>> {
+  const ctx = await juiz(sessionId);
+  if (!ctx.ok) return ctx;
+  if (delta !== "tudo" && (!Number.isInteger(delta) || delta === 0 || Math.abs(delta) > 500)) {
+    return { ok: false, error: "Quantidade inválida." };
+  }
+
+  const { data: c } = await ctx.supabase
+    .from("characters")
+    .select("id, name, owner_id, session_id, inventory")
+    .eq("id", characterId)
+    .maybeSingle<{ id: string; name: string; owner_id: string; session_id: string; inventory: unknown }>();
+  if (!c || c.session_id !== sessionId) return { ok: false, error: "Personagem fora desta mesa." };
+
+  const inv = lerInventario(c.inventory);
+  const alvo = inv[indice];
+  if (!alvo || (alvo.id ?? alvo.nome) !== chave) return { ok: false, error: "O inventário mudou. Confira a lista e tente de novo." };
+  const novo = ajustarLinha(inv, indice, delta);
+  if (!novo) return { ok: false, error: "Esse item não empilha." };
+
+  const nome = nomeDoItem(alvo);
+  const texto = delta === "tudo" ? `${c.name} perdeu ${nome}` : delta > 0 ? `${c.name} recebeu ${delta}× ${nome}` : `${c.name} perdeu ${-delta}× ${nome}`;
+  const { error } = await ctx.supabase.from("characters").update({ inventory: novo }).eq("id", c.id);
+  if (error) return { ok: false, error: error.message };
+  await evento(ctx.supabase, sessionId, ctx.userId, delta !== "tudo" && delta > 0 ? "item_given" : "item_removed", { texto, personagemId: c.id, itemId: alvo.id }, true, ctx.sessao.current_round);
   await avisar(ctx.supabase, sessionId, c.owner_id, c.name, texto);
   return { ok: true, texto };
 }

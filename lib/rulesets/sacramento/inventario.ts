@@ -142,6 +142,29 @@ export function ajustarCaixa(it: ItemInventario, balas: number, porCaixa: number
   it.quantidade = Math.ceil(balas / porCaixa);
 }
 
+/**
+ * Ajuste do Juiz numa linha do inventário: `delta` em balas para munição e em
+ * unidades para o resto; "tudo" tira a linha. Arma não empilha: cada uma é uma linha.
+ */
+export function ajustarLinha(inv: ItemInventario[], indice: number, delta: number | "tudo"): ItemInventario[] | null {
+  const it = inv[indice];
+  if (!it) return null;
+  const sem = () => inv.filter((_, i) => i !== indice);
+  if (delta === "tudo") return sem();
+  const u = usoDoItem(it.id);
+  if (u?.tipo === "arma-fogo" || u?.tipo === "porte") return delta < 0 ? sem() : null;
+  if (u?.tipo === "municao") {
+    const balas = balasDaCaixa(it) + delta;
+    if (balas <= 0) return sem();
+    const novo = { ...it };
+    ajustarCaixa(novo, balas, u.balasPorCaixa);
+    return inv.map((x, i) => (i === indice ? novo : x));
+  }
+  const quantidade = (it.quantidade ?? 1) + delta;
+  if (quantidade <= 0) return sem();
+  return inv.map((x, i) => (i === indice ? { ...it, quantidade } : x));
+}
+
 /** Remove entradas zeradas (caixa vazia, comida acabada). Armas e portes nunca somem. */
 export function limparVazios(inv: ItemInventario[]): ItemInventario[] {
   return inv.filter((it) => {

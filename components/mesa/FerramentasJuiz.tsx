@@ -8,7 +8,7 @@ import type { AjusteFicha } from "@/app/dashboard/sessions/[id]/play/mesa-action
 import { CATALOGO, CATEGORIAS } from "@/lib/character-creation/sacramento/catalogo";
 import { ANTECEDENTES, ATRIBUTOS } from "@/lib/character-creation/sacramento/rules";
 import { formatarReis } from "@/lib/rulesets/sacramento/economia";
-import { cargaDe, nomeDoItem, reservaDe, type ItemInventario } from "@/lib/rulesets/sacramento/inventario";
+import { balasDaCaixa, cargaDe, nomeDoItem, reservaDe, type ItemInventario } from "@/lib/rulesets/sacramento/inventario";
 import { usoDoItem, type Calibre } from "@/lib/rulesets/sacramento/itens-uso";
 import { CONDICOES, type FichaMesa } from "@/lib/rulesets/sacramento/mesa";
 
@@ -132,14 +132,53 @@ export function PainelXp({ xp, pending, aplicar }: { xp: number; pending: boolea
   );
 }
 
+function LinhaInventario({
+  item,
+  pending,
+  onAjustar,
+}: {
+  item: ItemInventario;
+  pending: boolean;
+  onAjustar: (delta: number | "tudo") => void;
+}) {
+  const uso = usoDoItem(item.id);
+  const nome = nomeDoItem(item);
+  const unico = uso?.tipo === "arma-fogo" || uso?.tipo === "porte";
+  const qtd = uso?.tipo === "municao" ? `${balasDaCaixa(item)} balas` : unico ? null : `${item.quantidade ?? 1}×`;
+  return (
+    <li className="flex items-center gap-1.5 rounded-lg border border-arcana-border-dim px-2.5 py-1">
+      <span className="min-w-0 flex-1 truncate font-crimson text-base text-white">{nome}</span>
+      {qtd && <span className="shrink-0 font-cinzel text-xs tabular-nums text-arcana-gold-bright">{qtd}</span>}
+      {!unico && (
+        <>
+          <button type="button" className={BTN} disabled={pending} onClick={() => onAjustar(-1)} aria-label={`Tirar um: ${nome}`}>−</button>
+          <button type="button" className={BTN} disabled={pending} onClick={() => onAjustar(1)} aria-label={`Somar um: ${nome}`}>+</button>
+        </>
+      )}
+      <button
+        type="button"
+        className="arcana-btn-danger arcana-btn-sm"
+        disabled={pending}
+        onClick={() => {
+          if (window.confirm(`Tirar ${nome} do inventário?`)) onAjustar("tudo");
+        }}
+      >
+        Tirar
+      </button>
+    </li>
+  );
+}
+
 export function PainelItens({
   inventario,
   pending,
   onDar,
+  onAjustar,
 }: {
   inventario: ItemInventario[];
   pending: boolean;
   onDar: (itemId: string, quantidade: number, balas?: number) => void;
+  onAjustar: (indice: number, item: ItemInventario, delta: number | "tudo") => void;
 }) {
   const [busca, setBusca] = useState("");
   const [categoria, setCategoria] = useState<(typeof CATEGORIAS)[number]["id"] | null>(null);
@@ -174,6 +213,17 @@ export function PainelItens({
           })}
         </p>
       )}
+      <p className={ROTULO}>Inventário</p>
+      {inventario.length === 0 ? (
+        <p className="font-crimson text-base text-arcana-text">Sem itens.</p>
+      ) : (
+        <ul className="max-h-64 space-y-1 overflow-y-auto pr-1" style={{ scrollbarWidth: "thin" }}>
+          {inventario.map((i, indice) => (
+            <LinhaInventario key={`${i.id ?? i.nome}-${indice}`} item={i} pending={pending} onAjustar={(d) => onAjustar(indice, i, d)} />
+          ))}
+        </ul>
+      )}
+      <p className={`${ROTULO} border-t border-arcana-gold/30 pt-2.5`}>Adicionar</p>
       <input
         value={busca}
         onChange={(e) => setBusca(e.target.value)}
