@@ -90,6 +90,31 @@ export function BarraVida({ vida, vidaMax }: { vida: number; vidaMax: number }) 
   );
 }
 
+/** Vida ponto a ponto: tocar um ponto leva a Vida direto para ele. */
+export function TrilhaVida({ vida, vidaMax, disabled, onEscolher }: { vida: number; vidaMax: number; disabled?: boolean; onEscolher: (n: number) => void }) {
+  const pct = vidaMax > 0 ? (vida / vidaMax) * 100 : 0;
+  const cor = pct > 60 ? "#4ecb8a" : pct > 30 ? "#f0cc6a" : "#e0503a";
+  return (
+    <div className="flex gap-1" role="group" aria-label={`Vida ${vida} de ${vidaMax}`}>
+      {Array.from({ length: vidaMax }, (_, i) => {
+        const n = i + 1;
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={disabled || n === vida}
+            onClick={() => onEscolher(n)}
+            title={`Deixar a Vida em ${n}`}
+            aria-label={`Deixar a Vida em ${n}`}
+            className="h-7 min-w-0 flex-1 rounded-md border border-white/25 transition-transform hover:border-white/70 enabled:hover:-translate-y-0.5"
+            style={n <= vida ? { background: cor, borderColor: cor } : { background: "rgba(255,255,255,.06)" }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 /** Seis círculos de Dor; o 6º fecha o ciclo. `onClick(n)` recebe o círculo tocado. */
 export function CirculosDor({ dor, onClick, tamanho = "md" }: { dor: number; onClick?: (n: number) => void; tamanho?: "sm" | "md" }) {
   const s = tamanho === "sm" ? "h-3.5 w-3.5" : "h-5 w-5";
