@@ -1,0 +1,145 @@
+// Araguari (Doc 2 §5.3, pp. 190–197): mineração de carvão, chuva, luto, "cidade das viúvas".
+// Canônicos: as minas de carvão e o Circo do Sol (Doc 2 §5.3 e linha do tempo, 1843).
+// Praça, igreja, estação, bairro operário, minas, cemitério, sítios e traçado das ruas são criação nossa.
+
+import type { Cidade } from "../tipos";
+import { fileira } from "./kit";
+
+const cidade: Cidade = {
+  id: "araguari",
+  nome: "Araguari",
+  tipo: "cidade",
+  raio: 1600,
+  chao: "lama",
+  especie: "copa",
+  arvores: 500,
+  chegada: { x: 0, z: 22 },
+  predios: [
+    // Centro
+    { id: "igreja", nome: "Igreja", tipo: "igreja", x: 0, z: -38, largura: 16, fundo: 26, altura: 12, entravel: true, porta: "s" },
+    { id: "escritorio-central", nome: "Escritório da Mineradora", tipo: "publico", x: -75, z: 16.5, largura: 18, fundo: 12, altura: 6, entravel: true, porta: "s" },
+    { id: "delegacia", nome: "Delegacia", tipo: "publico", x: 65, z: 16.5, largura: 16, fundo: 12, altura: 5, entravel: true, porta: "s" },
+    { id: "saloon", nome: "Saloon", tipo: "saloon", x: -100, z: 44.5, largura: 18, fundo: 14, altura: 6, entravel: true, porta: "n" },
+    { id: "hotel", nome: "Hotel", tipo: "hotel", x: -60, z: 44.5, largura: 20, fundo: 14, altura: 8, entravel: true, porta: "n" },
+    { id: "armazem", nome: "Armazém", tipo: "comercio", x: -30, z: 44.5, largura: 16, fundo: 12, altura: 5, entravel: true, porta: "n" },
+    { id: "padaria", nome: "Padaria", tipo: "comercio", x: -8, z: 44.5, largura: 10, fundo: 12, altura: 4, entravel: true, porta: "n" },
+    { id: "ferraria", nome: "Ferraria", tipo: "comercio", x: 20, z: 44.5, largura: 12, fundo: 12, altura: 5, entravel: true, porta: "n" },
+    { id: "enfermaria", nome: "Enfermaria", tipo: "publico", x: 50, z: 44.5, largura: 14, fundo: 12, altura: 5, entravel: true, porta: "n" },
+    { id: "escola", nome: "Escola", tipo: "publico", x: 75, z: 44.5, largura: 12, fundo: 12, altura: 5, entravel: true, porta: "n" },
+    // Estação e carga
+    { id: "estacao", nome: "Estação", tipo: "estacao", x: -70, z: -84, largura: 24, fundo: 10, altura: 6, entravel: true, porta: "s" },
+    { id: "galpao-cargas", nome: "Galpão de Cargas", tipo: "galpao", x: -205, z: -86, largura: 18, fundo: 12, altura: 6, entravel: true, porta: "s" },
+    { id: "caixa-dagua", nome: "Caixa d'água", tipo: "torre", x: -112, z: -88, largura: 6, fundo: 6, altura: 10, entravel: false },
+    // Bairro operário e arredores
+    { id: "taberna", nome: "Taberna", tipo: "saloon", x: -108, z: -120, largura: 14, fundo: 12, altura: 5, entravel: true, porta: "l" },
+    { id: "casa-operaria-1", nome: "Casa", tipo: "casa", x: -50, z: -121, largura: 10, fundo: 10, altura: 4, entravel: true, porta: "s" },
+    { id: "casa-operaria-2", nome: "Casa", tipo: "casa", x: 30, z: -225, largura: 10, fundo: 10, altura: 4, entravel: false },
+    { id: "cocheira", nome: "Cocheira", tipo: "galpao", x: -240, z: 100, largura: 18, fundo: 12, altura: 5, entravel: false },
+    // Minas
+    { id: "mina-boca", nome: "Mina de Carvão", tipo: "fabrica", x: 330, z: -690, largura: 26, fundo: 16, altura: 8, entravel: true, porta: "s", canon: true },
+    { id: "mina-maquinas", nome: "Casa de Máquinas", tipo: "fabrica", x: 275, z: -735, largura: 18, fundo: 14, altura: 9, entravel: true, porta: "l" },
+    { id: "mina-escritorio", nome: "Escritório da Mina", tipo: "publico", x: 255, z: -655, largura: 16, fundo: 12, altura: 5, entravel: true, porta: "s" },
+    { id: "mina-refeitorio", nome: "Refeitório", tipo: "comercio", x: 395, z: -735, largura: 16, fundo: 12, altura: 5, entravel: true, porta: "o" },
+    { id: "mina-poco-1", nome: "Poço da Mina", tipo: "torre", x: 330, z: -770, largura: 8, fundo: 8, altura: 22, entravel: false },
+    { id: "mina-poco-2", nome: "Poço da Mina", tipo: "torre", x: 380, z: -790, largura: 8, fundo: 8, altura: 20, entravel: false },
+    { id: "mina-poco-3", nome: "Poço da Mina", tipo: "torre", x: 450, z: -700, largura: 8, fundo: 8, altura: 20, entravel: false },
+    { id: "mina-lavador", nome: "Lavador de Carvão", tipo: "fabrica", x: 470, z: -770, largura: 22, fundo: 14, altura: 10, entravel: false },
+    { id: "mina-silo-1", nome: "Galpão de Carvão", tipo: "galpao", x: 240, z: -800, largura: 20, fundo: 14, altura: 6, entravel: false },
+    { id: "mina-silo-2", nome: "Galpão de Carvão", tipo: "galpao", x: 300, z: -830, largura: 20, fundo: 14, altura: 6, entravel: false },
+    { id: "mina-silo-3", nome: "Galpão de Carvão", tipo: "galpao", x: 520, z: -700, largura: 20, fundo: 14, altura: 6, entravel: false },
+    { id: "mina-velha-boca", nome: "Mina Velha", tipo: "fabrica", x: -520, z: -745, largura: 22, fundo: 14, altura: 7, entravel: true, porta: "s" },
+    { id: "mina-velha-poco", nome: "Poço da Mina", tipo: "torre", x: -560, z: -790, largura: 8, fundo: 8, altura: 18, entravel: false },
+    { id: "mina-velha-galpao", nome: "Galpão", tipo: "galpao", x: -470, z: -800, largura: 18, fundo: 12, altura: 5, entravel: false },
+    // Cemitério
+    { id: "capela", nome: "Capela", tipo: "igreja", x: -575, z: 305, largura: 10, fundo: 12, altura: 7, entravel: true, porta: "s" },
+    // Circo do Sol
+    { id: "circo-do-sol", nome: "Circo do Sol", tipo: "tenda", x: 700, z: 430, largura: 32, fundo: 32, altura: 14, entravel: true, porta: "o", canon: true },
+    { id: "circo-tenda-1", nome: "Tenda", tipo: "tenda", x: 668, z: 392, largura: 8, fundo: 6, altura: 4, entravel: false },
+    { id: "circo-tenda-2", nome: "Tenda", tipo: "tenda", x: 740, z: 382, largura: 8, fundo: 6, altura: 4, entravel: false },
+    { id: "circo-tenda-3", nome: "Tenda", tipo: "tenda", x: 760, z: 490, largura: 8, fundo: 6, altura: 4, entravel: false },
+    { id: "circo-tenda-4", nome: "Tenda", tipo: "tenda", x: 650, z: 480, largura: 8, fundo: 6, altura: 4, entravel: false },
+    // Sítios
+    { id: "sitio-oeste", nome: "Sítio", tipo: "fazenda", x: -820, z: 45.5, largura: 20, fundo: 14, altura: 5, entravel: true, porta: "n" },
+    { id: "celeiro-oeste", nome: "Celeiro", tipo: "galpao", x: -780, z: 46, largura: 14, fundo: 12, altura: 5, entravel: false },
+    { id: "sitio-leste", nome: "Sítio", tipo: "fazenda", x: 930, z: 14.5, largura: 20, fundo: 14, altura: 5, entravel: true, porta: "s" },
+    { id: "celeiro-leste", nome: "Celeiro", tipo: "galpao", x: 970, z: 14, largura: 14, fundo: 12, altura: 5, entravel: false },
+    { id: "sitio-sul", nome: "Sítio", tipo: "fazenda", x: 380, z: 740, largura: 22, fundo: 14, altura: 5, entravel: true, porta: "o" },
+    { id: "celeiro-sul", nome: "Celeiro", tipo: "galpao", x: 420, z: 770, largura: 14, fundo: 12, altura: 5, entravel: false },
+    { id: "casa-ruina", nome: "Casa abandonada", tipo: "ruina", x: -380, z: -330, largura: 10, fundo: 9, altura: 3, entravel: false },
+    { id: "casa-ruina-2", nome: "Casa abandonada", tipo: "ruina", x: 640, z: -250, largura: 10, fundo: 9, altura: 3, entravel: false },
+
+    // Rua Direita: fileiras dos dois lados, densas no centro e esparsas para o campo
+    ...fileira({ id: "dn-oeste", nome: "Casa", x: -430, z: 16.5, eixo: "x", quantidade: 20, vao: 4, seed: 11 }),
+    ...fileira({ id: "dn-leste", nome: "Casa", x: 100, z: 16.5, eixo: "x", quantidade: 18, vao: 4, seed: 12 }),
+    ...fileira({ id: "dn-leste2", nome: "Casa", x: 380, z: 16.5, eixo: "x", quantidade: 9, vao: 16, seed: 13 }),
+    ...fileira({ id: "dn-oeste2", nome: "Casa", x: -1060, z: 16.5, eixo: "x", quantidade: 9, vao: 22, seed: 14 }),
+    ...fileira({ id: "ds-oeste", nome: "Casa", x: -430, z: 43.5, eixo: "x", quantidade: 20, vao: 4, seed: 15 }),
+    ...fileira({ id: "ds-leste", nome: "Casa", x: 100, z: 43.5, eixo: "x", quantidade: 18, vao: 4, seed: 16 }),
+    ...fileira({ id: "ds-leste2", nome: "Casa", x: 380, z: 43.5, eixo: "x", quantidade: 8, vao: 16, seed: 17 }),
+    ...fileira({ id: "ds-oeste2", nome: "Casa", x: -1060, z: 43.5, eixo: "x", quantidade: 6, vao: 22, seed: 18 }),
+    // Rua do Comércio (z=130)
+    ...fileira({ id: "co-n", nome: "Casa", x: -118, z: 118, eixo: "x", quantidade: 15, vao: 3, seed: 21 }),
+    ...fileira({ id: "co-s", nome: "Casa", x: -118, z: 142, eixo: "x", quantidade: 15, vao: 3, seed: 22 }),
+    ...fileira({ id: "co-le-n", nome: "Casa", x: 100, z: 118, eixo: "x", quantidade: 8, vao: 5, seed: 23 }),
+    ...fileira({ id: "co-oe-s", nome: "Casa", x: -420, z: 142, eixo: "x", quantidade: 12, vao: 6, seed: 24 }),
+    // Bairro operário: casas iguais em fileiras, vielas de lama
+    ...fileira({ id: "op1-n", nome: "Casa de operário", x: -118, z: -177.5, eixo: "x", quantidade: 22, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 2, seed: 31 }),
+    ...fileira({ id: "op1-s", nome: "Casa de operário", x: -118, z: -162.5, eixo: "x", quantidade: 22, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 2, seed: 32 }),
+    ...fileira({ id: "op2-n", nome: "Casa de operário", x: -118, z: -203.5, eixo: "x", quantidade: 22, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 2, seed: 33 }),
+    ...fileira({ id: "op2-s", nome: "Casa de operário", x: -118, z: -188.5, eixo: "x", quantidade: 22, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 2, seed: 34 }),
+    ...fileira({ id: "op3-s", nome: "Casa de operário", x: -250, z: -232.5, eixo: "x", quantidade: 11, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 2, seed: 35 }),
+    // Vila ao sul da Rua do Comércio
+    ...fileira({ id: "vs-n", nome: "Casa", x: 112, z: 193.5, eixo: "x", quantidade: 13, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 3, seed: 41 }),
+    ...fileira({ id: "vs-s", nome: "Casa", x: 112, z: 208.5, eixo: "x", quantidade: 13, largura: [7, 8], fundo: [7, 8], altura: [3, 4], vao: 3, seed: 42 }),
+    // Estrada do sul e bairros afastados
+    ...fileira({ id: "sul-casas", nome: "Casa", x: 115, z: 360, eixo: "z", quantidade: 6, vao: 24, seed: 51 }),
+    ...fileira({ id: "cem-casas", nome: "Casa", x: -420, z: 335, eixo: "x", quantidade: 6, vao: 14, seed: 52 }),
+    // Acampamento das minas
+    ...fileira({ id: "mina-barracos", nome: "Barraco", x: 150, z: -560, eixo: "z", quantidade: 6, largura: [6, 8], fundo: [6, 8], vao: 6, seed: 61 }),
+  ],
+  ruas: [
+    { pts: [[-1590, 30], [-300, 30]], largura: 8, piso: "terra" },
+    { pts: [[-300, 30], [300, 30]], largura: 9, piso: "pedra" },
+    { pts: [[300, 30], [1590, 30]], largura: 8, piso: "terra" },
+    { pts: [[-430, 130], [430, 130]], largura: 6, piso: "lama" },
+    { pts: [[-130, -250], [-130, 330]], largura: 6, piso: "lama" },
+    { pts: [[90, 330], [90, 30], [90, -120], [130, -300], [200, -520], [320, -720]], largura: 7, piso: "lama" },
+    { pts: [[90, 330], [90, 500], [140, 800], [260, 1200], [360, 1580]], largura: 7, piso: "terra" },
+    { pts: [[-128, -170], [90, -170]], largura: 4, piso: "lama" },
+    { pts: [[-128, -196], [90, -196]], largura: 4, piso: "lama" },
+    { pts: [[-300, -240], [-130, -240]], largura: 4, piso: "lama" },
+    { pts: [[100, 201], [330, 201]], largura: 4, piso: "lama" },
+    { pts: [[320, -720], [260, -770], [250, -690]], largura: 6, piso: "lama" },
+    { pts: [[320, -720], [420, -760], [520, -740]], largura: 6, piso: "lama" },
+    { pts: [[-130, -250], [-200, -500], [-480, -730]], largura: 5, piso: "lama" },
+    { pts: [[-130, 250], [-330, 300], [-560, 330]], largura: 4, piso: "lama" },
+    { pts: [[610, 34], [640, 300], [655, 400], [676, 430]], largura: 5, piso: "lama" },
+    { pts: [[128, 740], [350, 740]], largura: 3, piso: "lama" },
+    { pts: [[-1590, -95], [-900, -85], [-400, -76], [-150, -70], [-30, -76], [120, -110], [200, -330], [330, -560], [400, -690]], largura: 4, piso: "trilho" },
+  ],
+  areas: [
+    { tipo: "praca", pts: [[-28, -22], [28, -22], [28, 14], [-28, 14]], nome: "Praça da Matriz" },
+    { tipo: "cemiterio", pts: [[-700, 240], [-590, 240], [-590, 360], [-700, 360]], nome: "Cemitério das Viúvas" },
+    { tipo: "cinzas", pts: [[200, -860], [560, -860], [560, -640], [200, -640]], nome: "Pátio das Minas" },
+    { tipo: "cinzas", pts: [[-620, -840], [-440, -840], [-440, -700], [-620, -700]] },
+    { tipo: "agua", pts: [[440, -640], [500, -630], [520, -590], [470, -570], [430, -600]], nome: "Lagoa de Rejeito" },
+    { tipo: "rochas", pts: [[560, -860], [660, -840], [680, -760], [600, -740], [550, -790]], nome: "Pilha de Escória" },
+    { tipo: "rochas", pts: [[130, -940], [230, -960], [260, -890], [180, -870]] },
+    { tipo: "rochas", pts: [[-380, -900], [-300, -910], [-290, -850], [-370, -840]] },
+    { tipo: "lama", pts: [[-60, 60], [60, 60], [60, 100], [-60, 100]] },
+    { tipo: "lama", pts: [[500, 90], [700, 100], [720, 200], [520, 210]] },
+    { tipo: "pasto", pts: [[-1000, 90], [-700, 90], [-700, 240], [-1000, 240]] },
+    { tipo: "pasto", pts: [[800, -150], [1100, -150], [1100, -30], [800, -30]] },
+    { tipo: "lavoura", pts: [[250, 790], [560, 800], [560, 960], [250, 950]], nome: "Roça do Sul" },
+    { tipo: "mata", pts: [[-1450, -1000], [-700, -1050], [-650, -500], [-1400, -450]], nome: "Mata de Araguari" },
+    { tipo: "mata", pts: [[700, -1300], [1300, -1100], [1350, -500], [800, -450]] },
+    { tipo: "mata", pts: [[-300, 700], [100, 700], [60, 1100], [-420, 1150]] },
+    { tipo: "mata", pts: [[-1300, 500], [-800, 480], [-780, 1000], [-1250, 1100]] },
+    { tipo: "mata", pts: [[900, 600], [1350, 500], [1300, 1000], [850, 1100]] },
+    { tipo: "agua", pts: [[-380, 560], [-320, 550], [-300, 600], [-350, 630], [-400, 600]], nome: "Açude" },
+    { tipo: "rochas", pts: [[1000, -700], [1100, -720], [1120, -640], [1040, -620]] },
+    { tipo: "rochas", pts: [[-1100, 700], [-1000, 690], [-990, 780], [-1090, 790]] },
+  ],
+};
+
+export default cidade;

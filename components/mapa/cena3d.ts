@@ -5,29 +5,31 @@
 // árvores e casas em InstancedMesh, sombra só em tela grande, pixel ratio limitado.
 
 import * as THREE from "three";
-import {
-  LADO_MUNDO,
-  PREDIOS,
-  SEM_BLOQUEIOS,
-  aoAlcance,
-  pontoLivre,
-  predioNoPonto,
-  type Bloqueios,
-  type Ponto,
-  type Predio,
-} from "@/lib/mapa/mundo";
+import { ALTURA_MAPA, LARGURA_MAPA, METROS_POR_UNIDADE_DO_MAPA, mundoDoLugar, mundoDoMapa } from "@/lib/mapa/lugares";
+import { aoAlcance, type Bloqueios } from "@/lib/mapa/mundo";
+import type { Pt } from "@/lib/mapa/geografia";
+import type { Ponto } from "@/lib/mapa/tipos";
+import { SEM_BLOQUEIOS, type Zona } from "@/lib/mapa/zona";
+import { montarContinente } from "./continente3d";
+import { montarLugar, type Teto } from "./cidade3d";
+import { etiqueta } from "./etiqueta";
 
 const ZOOM_MIN = 22;
-const ZOOM_MAX = 170;
-const DISTANCIA_ABRE_TELHADO = 75;
+const ZOOM_MAX = 1_400_000;
+const DISTANCIA_ABRE_TELHADO = 90;
+const DISTANCIA_NOMES_PREDIOS = 500;
+const DISTANCIA_NOMES_MAPA = 90_000;
+const DISTANCIA_DETALHE = 120_000;
+const FIGURA_PADRAO = 70;
 const ELEVACAO = 0.95;
 const AZIMUTE = Math.PI / 4;
 const TOQUE_MAX_PX = 8;
 
-export type PersonagemCena = { id: string; nome: string; x: number; z: number };
+export type PersonagemCena = { id: string; nome: string; x: number; z: number; zona: string };
 
 type Boneco = {
   id: string;
+  zona: string;
   grupo: THREE.Group;
   corpo: THREE.Group;
   rota: Ponto[];
@@ -36,87 +38,23 @@ type Boneco = {
   fase: number;
 };
 
-type Teto = { predio: Predio; telhado: THREE.Object3D; interior: THREE.Object3D };
-
 function corDoId(id: string) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return new THREE.Color().setHSL((h % 360) / 360, 0.75, 0.55);
 }
 
-function prng(seed: number) {
-  let a = seed;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function texturaDoChao() {
-  const lado = 1024;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = lado;
-  const c = canvas.getContext("2d")!;
-  c.fillStyle = "#7d7a45";
-  c.fillRect(0, 0, lado, lado);
-  const r = prng(7);
-  for (let i = 0; i < 9000; i++) {
-    c.fillStyle = `rgba(${40 + r() * 70},${50 + r() * 60},${20 + r() * 30},0.22)`;
-    c.fillRect(r() * lado, r() * lado, 2 + r() * 7, 2 + r() * 7);
-  }
-  const px = (v: number) => ((v + LADO_MUNDO / 2) / LADO_MUNDO) * lado;
-  c.strokeStyle = "#a98c5e";
-  c.lineCap = "round";
-  c.lineWidth = 34;
-  c.beginPath();
-  c.moveTo(px(-60), px(0));
-  c.lineTo(px(60), px(0));
-  c.moveTo(px(0), px(-60));
-  c.lineTo(px(0), px(60));
-  c.stroke();
-  c.lineWidth = 16;
-  for (const p of PREDIOS.filter((p) => p.entravel && p.id !== "bar-do-tiao")) {
-    c.beginPath();
-    c.moveTo(px(p.x), px(p.z + p.fundo / 2));
-    c.quadraticCurveTo(px(p.x), px(0), px(p.x * 0.3), px(0));
-    c.stroke();
-  }
-  const textura = new THREE.CanvasTexture(canvas);
-  textura.colorSpace = THREE.SRGBColorSpace;
-  return textura;
-}
-
-function etiqueta(texto: string, escala = 1) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 56;
-  const c = canvas.getContext("2d")!;
-  c.font = "bold 30px Georgia, serif";
-  c.textAlign = "center";
-  c.textBaseline = "middle";
-  c.lineWidth = 7;
-  c.strokeStyle = "rgba(0,0,0,0.9)";
-  c.strokeText(texto, 128, 28, 244);
-  c.fillStyle = "#fff";
-  c.fillText(texto, 128, 28, 244);
-  const material = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false, transparent: true });
-  const sprite = new THREE.Sprite(material);
-  sprite.scale.set(9 * escala, 2 * escala, 1);
-  sprite.renderOrder = 10;
-  return sprite;
-}
-
 export class Cena3D {
   private renderer: THREE.WebGLRenderer;
   private cena = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(32, 1, 2, 800);
+  private camera = new THREE.PerspectiveCamera(32, 1, 1, 4000);
   private alvo = new THREE.Vector3(0, 0, 0);
   private distancia = 120;
   private bonecos = new Map<string, Boneco>();
-  private tetos: Teto[] = [];
-  private chao: THREE.Mesh;
+  private origem: Ponto = { x: 0, z: 0 };
+  private continente = montarContinente();
+  private lugar: ReturnType<typeof montarLugar> | null = null;
+  private sol = new THREE.DirectionalLight("#ffd9a0", 2.2);
   private raio = new THREE.Raycaster();
   private sujo = true;
   private quadro = 0;
@@ -129,10 +67,13 @@ export class Cena3D {
 
   /** Vetor do joystick/teclado em [-1, 1]; (0,0) parado. Preenchido pela interface. */
   entrada = { x: 0, z: 0 };
-  velocidadeDireta = 6;
+  velocidadeDireta = 8;
+  zona: Zona | null = null;
   podeAndar = true;
   aoAndar?: (id: string, x: number, z: number, unidades: number) => void;
   aoTocar?: (ponto: Ponto) => void;
+  /** Câmera parou em cima do ponto do mapa impresso (mx, my). */
+  aoOlhar?: (mx: number, my: number) => void;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -140,30 +81,16 @@ export class Cena3D {
     private juiz: boolean,
   ) {
     const grande = window.matchMedia("(min-width: 1024px)").matches;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: grande, powerPreference: "high-performance" });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: grande, powerPreference: "high-performance", logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, grande ? 2 : 1.5));
     this.renderer.shadowMap.enabled = grande;
     this.cena.background = new THREE.Color("#1a1612");
-    this.cena.fog = new THREE.Fog("#1a1612", 200, 420);
 
     this.cena.add(new THREE.HemisphereLight("#fff1d6", "#54452f", 1.7));
-    const sol = new THREE.DirectionalLight("#ffd9a0", 2.2);
-    sol.position.set(-50, 90, 40);
-    sol.castShadow = grande;
-    sol.shadow.mapSize.set(2048, 2048);
-    Object.assign(sol.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, far: 220 });
-    this.cena.add(sol);
-
-    this.chao = new THREE.Mesh(
-      new THREE.PlaneGeometry(LADO_MUNDO, LADO_MUNDO),
-      new THREE.MeshLambertMaterial({ map: texturaDoChao() }),
-    );
-    this.chao.rotation.x = -Math.PI / 2;
-    this.chao.receiveShadow = true;
-    this.cena.add(this.chao);
-
-    for (const p of PREDIOS) this.montarPredio(p);
-    this.montarArvores();
+    this.sol.castShadow = grande;
+    this.sol.shadow.mapSize.set(2048, 2048);
+    Object.assign(this.sol.shadow.camera, { left: -110, right: 110, top: 110, bottom: -110, far: 320 });
+    this.cena.add(this.sol, this.sol.target, this.continente.grupo);
     this.posicionarCamera();
 
     canvas.style.touchAction = "none";
@@ -178,81 +105,33 @@ export class Cena3D {
     this.quadro = requestAnimationFrame(this.ciclo);
   }
 
-  private montarPredio(p: Predio) {
-    const parede = new THREE.MeshLambertMaterial({ color: p.cor });
-    const telhadoMat = new THREE.MeshLambertMaterial({ color: "#6e3a2a" });
-    const telhado = new THREE.Mesh(new THREE.ConeGeometry(Math.SQRT2 / 2, 1, 4).rotateY(Math.PI / 4), telhadoMat);
-    telhado.scale.set(p.largura * 1.08, 3, p.fundo * 1.08);
-    telhado.position.set(p.x, p.altura + 1.5, p.z);
-    telhado.castShadow = true;
-    this.cena.add(telhado);
-
-    if (!p.entravel) {
-      const caixa = new THREE.Mesh(new THREE.BoxGeometry(p.largura, p.altura, p.fundo), parede);
-      caixa.position.set(p.x, p.altura / 2, p.z);
-      caixa.castShadow = true;
-      this.cena.add(caixa);
-      return;
+  /** Troca o lugar detalhado; a origem da cena segue junto para não perder precisão. */
+  abrirLugar(zona: Zona) {
+    if (this.lugar) {
+      this.cena.remove(this.lugar.grupo);
+      this.descartar(this.lugar.grupo);
     }
-
-    const e = 0.5;
-    const interior = new THREE.Group();
-    const parte = (w: number, h: number, d: number, x: number, y: number, z: number, m: THREE.Material) => {
-      const malha = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-      malha.position.set(p.x + x, y, p.z + z);
-      malha.castShadow = true;
-      return malha;
-    };
-    const lado = (p.largura - 5) / 2;
-    this.cena.add(
-      parte(p.largura, p.altura, e, 0, p.altura / 2, -p.fundo / 2, parede),
-      parte(e, p.altura, p.fundo, -p.largura / 2, p.altura / 2, 0, parede),
-      parte(e, p.altura, p.fundo, p.largura / 2, p.altura / 2, 0, parede),
-      parte(lado, p.altura, e, -(lado + 5) / 2, p.altura / 2, p.fundo / 2, parede),
-      parte(lado, p.altura, e, (lado + 5) / 2, p.altura / 2, p.fundo / 2, parede),
-    );
-    const madeira = new THREE.MeshLambertMaterial({ color: "#5a3a22" });
-    const piso = parte(p.largura - 0.4, 0.1, p.fundo - 0.4, 0, 0.06, 0, new THREE.MeshLambertMaterial({ color: "#c9ae84" }));
-    piso.castShadow = false;
-    interior.add(piso, parte(p.largura * 0.7, 1.1, 1, 0, 0.55, -p.fundo / 2 + 1.5, madeira));
-    for (const lx of [-0.28, 0.28]) interior.add(parte(2.2, 0.9, 2.2, p.largura * lx, 0.45, 1.5, madeira));
-    this.cena.add(interior);
-
-    const nome = etiqueta(p.nome, 1.5);
-    nome.position.set(p.x, p.altura + 5.5, p.z);
-    this.cena.add(nome);
-    this.tetos.push({ predio: p, telhado, interior });
+    const velha = this.origem;
+    this.origem = mundoDoLugar(zona.cidade.id);
+    const dx = velha.x - this.origem.x;
+    const dz = velha.z - this.origem.z;
+    this.alvo.x += dx;
+    this.alvo.z += dz;
+    this.continente.grupo.position.set(-this.origem.x, 0, -this.origem.z);
+    this.zona = zona;
+    this.lugar = montarLugar(zona);
+    this.cena.add(this.lugar.grupo);
+    for (const b of this.bonecos.values()) {
+      b.grupo.position.x += dx;
+      b.grupo.position.z += dz;
+      b.rota = [];
+    }
+    this.posicionarCamera();
   }
 
-  private montarArvores() {
-    const r = prng(19);
-    const pontos: Ponto[] = [];
-    while (pontos.length < 260) {
-      const x = (r() - 0.5) * (LADO_MUNDO - 4);
-      const z = (r() - 0.5) * (LADO_MUNDO - 4);
-      if (Math.abs(x) < 5 || Math.abs(z) < 5 || !pontoLivre(x, z) || predioNoPonto(x, z)) continue;
-      pontos.push({ x, z });
-    }
-    const copa = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(1.7, 0),
-      new THREE.MeshLambertMaterial({ color: "#46603a", flatShading: true }),
-      pontos.length,
-    );
-    const tronco = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.22, 0.32, 1.8, 5),
-      new THREE.MeshLambertMaterial({ color: "#4a3524" }),
-      pontos.length,
-    );
-    const m = new THREE.Matrix4();
-    pontos.forEach((p, i) => {
-      const e = 0.8 + r() * 0.7;
-      m.makeScale(e, e * 1.2, e).setPosition(p.x, 2.6 * e, p.z);
-      copa.setMatrixAt(i, m);
-      m.makeScale(e, e, e).setPosition(p.x, 0.9 * e, p.z);
-      tronco.setMatrixAt(i, m);
-    });
-    copa.castShadow = true;
-    this.cena.add(copa, tronco);
+  private deslocamento(zona: string): Ponto {
+    const p = mundoDoLugar(zona);
+    return { x: p.x - this.origem.x, z: p.z - this.origem.z };
   }
 
   private posicionarCamera() {
@@ -263,6 +142,11 @@ export class Cena3D {
       this.alvo.z + Math.cos(AZIMUTE) * h,
     );
     this.camera.lookAt(this.alvo);
+    this.camera.near = Math.max(1, this.distancia / 100);
+    this.camera.far = this.distancia * 8 + 4000;
+    this.camera.updateProjectionMatrix();
+    this.sol.target.position.copy(this.alvo);
+    this.sol.position.set(this.alvo.x - 70, 130, this.alvo.z + 55);
     this.sujo = true;
   }
 
@@ -281,7 +165,8 @@ export class Cena3D {
       new THREE.Vector2(((px - caixa.left) / caixa.width) * 2 - 1, -((py - caixa.top) / caixa.height) * 2 + 1),
       this.camera,
     );
-    const hit = this.raio.intersectObject(this.chao)[0];
+    if (!this.lugar) return null;
+    const hit = this.raio.intersectObject(this.lugar.chao)[0];
     return hit ? { x: hit.point.x, z: hit.point.z } : null;
   }
 
@@ -309,11 +194,12 @@ export class Cena3D {
     const fator = (this.distancia / this.canvas.clientHeight) * 0.75;
     const dx = (e.clientX - antes.x) * fator;
     const dy = (e.clientY - antes.y) * fator * 1.3;
-    const limite = LADO_MUNDO / 2;
     const s = Math.SQRT1_2;
-    this.alvo.x = THREE.MathUtils.clamp(this.alvo.x - (dx + dy) * s, -limite, limite);
-    this.alvo.z = THREE.MathUtils.clamp(this.alvo.z - (dy - dx) * s, -limite, limite);
+    this.alvo.x -= (dx + dy) * s;
+    this.alvo.z -= (dy - dx) * s;
+    this.limitarAlvo();
     this.posicionarCamera();
+    this.avisarOlhar();
   };
 
   private aoSoltar = (e: PointerEvent) => {
@@ -333,13 +219,40 @@ export class Cena3D {
 
   zoom(fator: number) {
     this.distancia = THREE.MathUtils.clamp(this.distancia * fator, ZOOM_MIN, ZOOM_MAX);
+    this.limitarAlvo();
     this.posicionarCamera();
   }
+
+  /** Jogador olha o próprio lugar; de longe, e para o Juiz, vale o continente. */
+  private limitarAlvo() {
+    const raio = this.zona?.cidade.raio ?? 0;
+    if (!this.juiz && this.distancia < DISTANCIA_DETALHE) {
+      const d = Math.hypot(this.alvo.x, this.alvo.z);
+      if (d > raio) this.alvo.multiplyScalar(raio / d);
+    }
+    const [mx, mz] = [(LARGURA_MAPA * METROS_POR_UNIDADE_DO_MAPA) / 2, (ALTURA_MAPA * METROS_POR_UNIDADE_DO_MAPA) / 2];
+    this.alvo.x = THREE.MathUtils.clamp(this.alvo.x, -mx - this.origem.x, mx - this.origem.x);
+    this.alvo.z = THREE.MathUtils.clamp(this.alvo.z, -mz - this.origem.z, mz - this.origem.z);
+  }
+
+  private avisarOlhar() {
+    if (!this.aoOlhar) return;
+    const m = METROS_POR_UNIDADE_DO_MAPA;
+    this.aoOlhar((this.alvo.x + this.origem.x) / m + LARGURA_MAPA / 2, (this.alvo.z + this.origem.z) / m + ALTURA_MAPA / 2);
+  }
+
 
   centrar(x: number, z: number, distancia?: number) {
     this.alvo.set(x, 0, z);
     if (distancia) this.distancia = distancia;
     this.posicionarCamera();
+    this.sujo = true;
+  }
+
+  /** Centra num lugar do continente, aberto ou não. */
+  olharMundo(p: Ponto, distancia: number) {
+    this.centrar(p.x - this.origem.x, p.z - this.origem.z, distancia);
+    this.avisarOlhar();
   }
 
   definirBloqueios(b: Bloqueios) {
@@ -349,7 +262,11 @@ export class Cena3D {
 
   sincronizar(lista: PersonagemCena[]) {
     for (const p of lista) {
-      if (this.bonecos.has(p.id)) continue;
+      const existente = this.bonecos.get(p.id);
+      if (existente) {
+        existente.zona = p.zona;
+        continue;
+      }
       const cor = corDoId(p.id);
       const grupo = new THREE.Group();
       const corpo = new THREE.Group();
@@ -371,22 +288,64 @@ export class Cena3D {
       const nome = etiqueta(p.nome);
       nome.position.y = 4;
       grupo.add(corpo, aro, nome);
-      grupo.position.set(p.x, 0, p.z);
+      const d = this.deslocamento(p.zona);
+      grupo.position.set(p.x + d.x, 0, p.z + d.z);
       this.cena.add(grupo);
-      this.bonecos.set(p.id, { id: p.id, grupo, corpo, rota: [], velocidade: 0, fase: 0 });
+      this.bonecos.set(p.id, { id: p.id, zona: p.zona, grupo, corpo, rota: [], velocidade: 0, fase: 0 });
     }
     this.sujo = true;
   }
 
   posicao(id: string): Ponto | null {
     const b = this.bonecos.get(id);
-    return b ? { x: b.grupo.position.x, z: b.grupo.position.z } : null;
+    if (!b) return null;
+    const d = this.deslocamento(b.zona);
+    return { x: b.grupo.position.x - d.x, z: b.grupo.position.z - d.z };
+  }
+
+  /** Personagem chegou de viagem: entra na posição nova, sem rota. */
+  colocar(id: string, zona: string, x: number, z: number) {
+    const b = this.bonecos.get(id);
+    if (!b) return;
+    b.zona = zona;
+    b.rota = [];
+    const d = this.deslocamento(zona);
+    b.grupo.position.set(x + d.x, 0, z + d.z);
+    this.sujo = true;
+  }
+
+  /** Marcha do bando pelas estradas, vista do alto. */
+  marchar(ids: string[], pts: Pt[], segundos: number, aoChegar: () => void) {
+    const rota = pts.map(([mx, my]) => {
+      const p = mundoDoMapa(mx, my);
+      return { x: p.x - this.origem.x, z: p.z - this.origem.z };
+    });
+    let total = 0;
+    for (let i = 1; i < rota.length; i++) total += Math.hypot(rota[i].x - rota[i - 1].x, rota[i].z - rota[i - 1].z);
+    const xs = rota.map((p) => p.x);
+    const zs = rota.map((p) => p.z);
+    const meio = { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 };
+    this.alvo.set(meio.x, 0, meio.z);
+    this.distancia = Math.max(60_000, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 2.2);
+    this.posicionarCamera();
+    let primeiro = true;
+    for (const id of ids) {
+      const b = this.bonecos.get(id);
+      if (!b) continue;
+      b.grupo.position.set(rota[0].x, 0, rota[0].z);
+      b.rota = rota.slice(1);
+      b.velocidade = total / segundos;
+      b.aoChegar = primeiro ? aoChegar : undefined;
+      primeiro = false;
+    }
+    if (primeiro) aoChegar();
   }
 
   percorrer(id: string, rota: Ponto[], velocidade: number, aoChegar?: () => void) {
     const b = this.bonecos.get(id);
     if (!b) return;
-    b.rota = rota.slice(1);
+    const d = this.deslocamento(b.zona);
+    b.rota = rota.slice(1).map((p) => ({ x: p.x + d.x, z: p.z + d.z }));
     b.velocidade = velocidade;
     b.aoChegar = aoChegar;
   }
@@ -395,8 +354,9 @@ export class Cena3D {
   teleportar(id: string, x: number, z: number) {
     const b = this.bonecos.get(id);
     if (!b) return;
-    b.rota = [{ x, z }];
-    b.velocidade = 12;
+    const d = this.deslocamento(b.zona);
+    b.rota = [{ x: x + d.x, z: z + d.z }];
+    b.velocidade = 16;
   }
 
   private gamepad() {
@@ -423,7 +383,8 @@ export class Cena3D {
   private andarDireto(dt: number) {
     if (!this.meuId) return false;
     const b = this.bonecos.get(this.meuId);
-    if (!b) return false;
+    const zona = this.zona;
+    if (!b || !zona || b.zona !== zona.cidade.id) return false;
     const e = this.gamepad() ?? this.entrada;
     const forca = Math.min(1, Math.hypot(e.x, e.z));
     if (!forca || !this.podeAndar) return false;
@@ -436,12 +397,12 @@ export class Cena3D {
     const passo = this.velocidadeDireta * forca * dt;
     const x = b.grupo.position.x + (nx / n) * passo;
     const z = b.grupo.position.z + (nz / n) * passo;
-    const livre = pontoLivre(x, z, this.bloqueios);
+    const livre = zona.pontoLivre(x, z, this.bloqueios);
     const antesX = b.grupo.position.x;
     const antesZ = b.grupo.position.z;
     if (livre) b.grupo.position.set(x, 0, z);
-    else if (pontoLivre(x, antesZ, this.bloqueios)) b.grupo.position.x = x;
-    else if (pontoLivre(antesX, z, this.bloqueios)) b.grupo.position.z = z;
+    else if (zona.pontoLivre(x, antesZ, this.bloqueios)) b.grupo.position.x = x;
+    else if (zona.pontoLivre(antesX, z, this.bloqueios)) b.grupo.position.z = z;
     const andou = Math.hypot(b.grupo.position.x - antesX, b.grupo.position.z - antesZ);
     if (!andou) return false;
     b.fase += dt * 14;
@@ -482,24 +443,41 @@ export class Cena3D {
 
   /** Telhado abre no zoom ou com o jogador dentro; interior escondido nunca abre para jogador. */
   private atualizarVisibilidade() {
+    const zona = this.zona;
+    const lugar = this.lugar;
+    if (!zona || !lugar) return;
+    const escalaFigura = Math.max(1, this.distancia / FIGURA_PADRAO);
     const eu = this.meuId ? this.posicao(this.meuId) : null;
-    const dentroDe = eu ? predioNoPonto(eu.x, eu.z) : null;
+    const minhaZona = this.meuId ? this.bonecos.get(this.meuId)?.zona : null;
+    const dentroDe = eu ? zona.predioNoPonto(eu.x, eu.z) : null;
+    lugar.grupo.visible = this.distancia < DISTANCIA_DETALHE;
+    for (const n of lugar.nomes) n.visible = this.distancia < DISTANCIA_NOMES_PREDIOS;
+    for (const n of this.continente.nomes) {
+      n.visible = this.distancia > DISTANCIA_NOMES_MAPA && (n.userData.forte || this.distancia < 900_000);
+      const e = this.distancia / 26;
+      n.scale.set(e * 5.7, e, 1);
+    }
     const perto = this.distancia < DISTANCIA_ABRE_TELHADO;
     const oculto = (id: string) => !this.juiz && this.bloqueios.vista.includes(id);
 
-    for (const t of this.tetos) {
+    for (const t of lugar.tetos as Teto[]) {
       const estou = dentroDe?.id === t.predio.id;
       const aberto = (perto || estou) && !(oculto(t.predio.id) && !estou);
       t.telhado.visible = !aberto;
       t.interior.visible = aberto;
     }
     for (const b of this.bonecos.values()) {
+      b.grupo.scale.setScalar(escalaFigura);
       if (b.id === this.meuId || this.juiz) {
         b.grupo.visible = true;
         continue;
       }
-      const p = { x: b.grupo.position.x, z: b.grupo.position.z };
-      const predio = predioNoPonto(p.x, p.z);
+      if (b.zona !== minhaZona) {
+        b.grupo.visible = false;
+        continue;
+      }
+      const p = this.posicao(b.id)!;
+      const predio = zona.predioNoPonto(p.x, p.z);
       const escondido = predio && oculto(predio.id) && predio.id !== dentroDe?.id;
       b.grupo.visible = !escondido && (!eu || aoAlcance(eu, p));
     }
@@ -513,12 +491,17 @@ export class Cena3D {
     this.canvas.removeEventListener("pointerup", this.aoSoltar);
     this.canvas.removeEventListener("pointercancel", this.aoSoltar);
     this.canvas.removeEventListener("wheel", this.aoRolar);
-    this.cena.traverse((o) => {
+    this.descartar(this.cena);
+    this.renderer.dispose();
+  }
+
+  private descartar(raiz: THREE.Object3D) {
+    raiz.traverse((o) => {
       const m = o as THREE.Mesh;
       m.geometry?.dispose();
-      const material = m.material as THREE.Material | undefined;
+      const material = m.material as THREE.MeshLambertMaterial | undefined;
+      material?.map?.dispose();
       material?.dispose?.();
     });
-    this.renderer.dispose();
   }
 }
