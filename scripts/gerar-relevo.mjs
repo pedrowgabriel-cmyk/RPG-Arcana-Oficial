@@ -104,7 +104,7 @@ const BAIXADAS = [
   { x: 560, y: 508, r: 78, fundo: 180 }, // Sertão de Fungos, úmido
   { x: 671, y: 72, r: 24, fundo: 980 }, // vale de Maria da Fé, entre montanhas
 ];
-const CANIONS = [[[140, 690], [180, 670], [205, 650], [238, 622], [262, 576]]]; // Ravina Vermelha
+const CANIONS = [[[150, 705], [190, 685], [215, 665], [248, 637], [272, 591]]]; // Ravina Vermelha
 
 function altitude(x, y) {
   let costa = Infinity;

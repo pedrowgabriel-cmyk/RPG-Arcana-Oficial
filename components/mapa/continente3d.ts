@@ -18,7 +18,7 @@ import { CONT_ALTURA, CONT_LARGURA } from "@/lib/mapa/dados-relevo";
 import { altitudeContinente, dadosDoContinente } from "@/lib/mapa/relevo";
 import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, cidadesCarregadas, lugarPorId, mundoDoMapa } from "@/lib/mapa/lugares";
 import type { XZ } from "@/lib/mapa/tipos";
-import { COR_AREA, COR_PISO, montarPredios } from "./cidade3d";
+import { COR_AREA, COR_CHAO, COR_PISO, montarPredios } from "./cidade3d";
 import { etiqueta } from "./etiqueta";
 
 const PX_POR_UNIDADE = 4;
@@ -127,15 +127,16 @@ function salpicar(c: CanvasRenderingContext2D) {
   c.restore();
 }
 
-/** Cor do continente num ponto do mapa, para a borda de um lugar encostar nela. */
-export function corDoContinente(mx: number, my: number) {
-  const [r, g, b] = amostra!.getImageData(mx * PX_POR_UNIDADE, my * PX_POR_UNIDADE, 1, 1).data;
-  return `rgb(${r},${g},${b})`;
-}
-
 /** Ruas e áreas de cada lugar direto no chão do continente: vistas de longe, as cidades existem. */
 function pintarCidades(c: CanvasRenderingContext2D) {
   const k = 1 / METROS_POR_UNIDADE_DO_MAPA;
+  let a = 131;
+  const semente = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   c.save();
   c.lineCap = "round";
   c.lineJoin = "round";
@@ -145,6 +146,19 @@ function pintarCidades(c: CanvasRenderingContext2D) {
       c.beginPath();
       pts.forEach(([x, z], i) => (i ? c.lineTo(l.mx + x * k, l.my + z * k) : c.moveTo(l.mx + x * k, l.my + z * k)));
     };
+    // Tom do chão do lugar em manchas soltas, que somem no campo sem formar borda.
+    const raio = cidade.raio * k;
+    const rgb = new THREE.Color(COR_CHAO[cidade.chao]);
+    const cor = `${Math.round(rgb.r * 255)},${Math.round(rgb.g * 255)},${Math.round(rgb.b * 255)}`;
+    for (let i = 0; i < 70; i++) {
+      const [ang, d, e] = [semente() * Math.PI * 2, Math.sqrt(semente()) * raio * 1.05, raio * (0.2 + semente() * 0.4)];
+      const [x, y] = [l.mx + Math.cos(ang) * d, l.my + Math.sin(ang) * d];
+      const g = c.createRadialGradient(x, y, 0, x, y, e);
+      g.addColorStop(0, `rgba(${cor},0.34)`);
+      g.addColorStop(1, `rgba(${cor},0)`);
+      c.fillStyle = g;
+      c.fillRect(x - e, y - e, e * 2, e * 2);
+    }
     for (const a of cidade.areas) {
       if (a.tipo === "agua") continue;
       c.fillStyle = COR_AREA[a.tipo];
@@ -221,6 +235,31 @@ function montarVizinhas() {
     mapa.set(cidade.id, g);
   }
   return mapa;
+}
+
+const uOrigem = { value: new THREE.Vector2() };
+let grao: { value: THREE.Texture } | null = null;
+
+/** Mesmo grão no continente e nos lugares: é o que esconde a troca de nível de detalhe. */
+export function comGrao(s: THREE.WebGLProgramParametersWithUniforms) {
+  grao ??= { value: texturaDeGrao() };
+  s.uniforms.uOrigem = uOrigem;
+  s.uniforms.uGrao = grao;
+  s.fragmentShader = s.fragmentShader
+    .replace("#include <common>", "#include <common>\nuniform vec2 uOrigem;\nuniform sampler2D uGrao;")
+    .replace(
+      "#include <map_fragment>",
+      `#include <map_fragment>
+      vec2 uvGrao = (vMundo + uOrigem) / 260.0;
+      float grao = texture2D(uGrao, uvGrao).r * 0.6 + texture2D(uGrao, uvGrao / 5.3).r * 0.4;
+      diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.5;`,
+    );
+}
+
+/** Copia o chão do continente: o lugar nasce com a mesma cor do que está em volta. */
+export function copiarContinente(destino: CanvasRenderingContext2D, mx: number, my: number, raioEmUnidades: number, lado: number) {
+  const px = PX_POR_UNIDADE;
+  destino.drawImage(amostra!.canvas, (mx - raioEmUnidades) * px, (my - raioEmUnidades) * px, raioEmUnidades * 2 * px, raioEmUnidades * 2 * px, 0, 0, lado, lado);
 }
 
 /** Grão que repete pelo mundo: mantém o chão nítido entre a cidade e o continente. */
@@ -324,23 +363,11 @@ export function montarContinente() {
   geo.computeVertexNormals();
 
   const uRaio = { value: 0 };
-  const uOrigem = { value: new THREE.Vector2() };
-  const uGrao = { value: texturaDeGrao() };
   const material = new THREE.MeshLambertMaterial({ map: pintar() });
   // O lugar aberto tem malha própria: o continente abre um buraco para ela.
   material.onBeforeCompile = (s) => {
     abrirBuraco(s, uRaio, false);
-    s.uniforms.uOrigem = uOrigem;
-    s.uniforms.uGrao = uGrao;
-    s.fragmentShader = s.fragmentShader
-      .replace("uniform float uRaio;", "uniform float uRaio;\nuniform vec2 uOrigem;\nuniform sampler2D uGrao;")
-      .replace(
-        "#include <map_fragment>",
-        `#include <map_fragment>
-        vec2 uvGrao = (vMundo + uOrigem) / 260.0;
-        float grao = texture2D(uGrao, uvGrao).r * 0.6 + texture2D(uGrao, uvGrao / 5.3).r * 0.4;
-        diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.5;`,
-      );
+    comGrao(s);
   };
   const malha = new THREE.Mesh(geo, material);
   const vias = montarVias();

@@ -7,14 +7,15 @@ export const CONT_ALTURA = 369;
 export const RECORTE_LADO = 301;
 
 /**
- * Escala do mundo, entre GTA e Red Dead: 1 unidade do mapa impresso = 50 m.
- * O continente tem cerca de 50 km; a história segue em 1 unidade = 1 km (lib/mapa/viagem.ts).
+ * Escala do mundo, entre GTA e Red Dead: 1 unidade do mapa impresso = 42 m.
+ * O continente tem cerca de 42 km; a história segue em 1 unidade = 1 km (lib/mapa/viagem.ts).
  */
-export const METROS_POR_UNIDADE_DO_MAPA = 50;
+export const METROS_POR_UNIDADE_DO_MAPA = 42;
 
 /** Lugares que colidiriam nesta escala, afastados só no 3D. */
 export const POSICAO_3D: Record<string, { x: number; y: number }> = {
-  "deserto-de-mucuri": { x: 205, y: 650 },
+  "deserto-de-mucuri": { x: 215, y: 665 },
+  "serra-da-saudade-cordilheira": { x: 552, y: 128 },
 };
 
 /** Lugares com recorte real de Minas: centro (graus) e lado do quadrado (metros). */

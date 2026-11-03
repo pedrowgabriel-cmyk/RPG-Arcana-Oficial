@@ -21,8 +21,13 @@ const ZOOM_MAX = 75_000;
 const DISTANCIA_ABRE_TELHADO = 90;
 const DISTANCIA_NOMES_PREDIOS = 500;
 const DISTANCIA_NOMES_MAPA = 3200;
-const DISTANCIA_DETALHE = 9000;
+/** Nível de detalhe: perto vale o lugar; ao abrir, os prédios viram os leves e o chão some aos poucos. */
+const DISTANCIA_DETALHE = 4200;
+const DISTANCIA_SEM_CHAO = 6800;
 const DISTANCIA_VIAS = 1400;
+/** Quanto maior, mais rápido a câmera alcança o pedido. */
+const SUAVIDADE = 7;
+const GIRO_POR_PIXEL = 0.006;
 const FIGURA_PADRAO = 70;
 const ELEVACAO_RUA = 0.5;
 const ELEVACAO_ALTO = 1.15;
@@ -70,6 +75,9 @@ export class Cena3D {
   private nuvens = new Nuvens();
   private neblina = new THREE.Fog(COR_CEU, 1e7, 2e7);
   private azimute = AZIMUTE;
+  private azimuteAlvo = AZIMUTE;
+  private distanciaAlvo = 120;
+  private torcao: number | null = null;
   private exagero = 1;
   private ultimaNuvem = 0;
   private raio = new THREE.Raycaster();
@@ -118,6 +126,7 @@ export class Cena3D {
     canvas.addEventListener("pointerup", this.aoSoltar);
     canvas.addEventListener("pointercancel", this.aoSoltar);
     canvas.addEventListener("wheel", this.aoRolar, { passive: false });
+    canvas.addEventListener("contextmenu", this.semMenu);
     this.medir = new ResizeObserver(() => this.ajustarTamanho());
     this.medir.observe(canvas.parentElement ?? canvas);
     this.ajustarTamanho();
@@ -222,10 +231,17 @@ export class Cena3D {
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       if (this.pinca) this.zoom(this.pinca / d);
       this.pinca = d;
+      const torcao = Math.atan2(b.y - a.y, b.x - a.x);
+      if (this.torcao !== null) this.girar(THREE.MathUtils.euclideanModulo(torcao - this.torcao + Math.PI, Math.PI * 2) - Math.PI);
+      this.torcao = torcao;
       return;
     }
     if (this.inicioToque && Math.hypot(e.clientX - this.inicioToque.x, e.clientY - this.inicioToque.y) < TOQUE_MAX_PX) return;
     this.inicioToque = null;
+    if (e.buttons & 2) {
+      this.girar((e.clientX - antes.x) * GIRO_POR_PIXEL);
+      return;
+    }
     const fator = (this.distancia / this.canvas.clientHeight) * 0.75;
     const dx = (e.clientX - antes.x) * fator;
     const dy = (e.clientY - antes.y) * fator * 1.3;
@@ -245,7 +261,10 @@ export class Cena3D {
     }
     this.inicioToque = null;
     this.pinca = 0;
+    this.torcao = null;
   };
+
+  private semMenu = (e: Event) => e.preventDefault();
 
   private aoRolar = (e: WheelEvent) => {
     e.preventDefault();
@@ -253,13 +272,22 @@ export class Cena3D {
   };
 
   zoom(fator: number) {
-    this.distancia = THREE.MathUtils.clamp(this.distancia * fator, ZOOM_MIN, ZOOM_MAX);
-    this.limitarAlvo();
-    this.posicionarCamera();
+    this.distanciaAlvo = THREE.MathUtils.clamp(this.distanciaAlvo * fator, ZOOM_MIN, ZOOM_MAX);
   }
 
   girar(radianos: number) {
-    this.azimute += radianos;
+    this.azimuteAlvo += radianos;
+  }
+
+  /** Zoom e giro alcançam o pedido aos poucos; o zoom em escala log, para parecer igual perto e longe. */
+  private suavizar(dt: number) {
+    const k = 1 - Math.exp(-dt * SUAVIDADE);
+    const dz = Math.log(this.distanciaAlvo / this.distancia);
+    const da = this.azimuteAlvo - this.azimute;
+    if (Math.abs(dz) < 0.0005 && Math.abs(da) < 0.0005) return;
+    this.distancia *= Math.exp(dz * k);
+    this.azimute += da * k;
+    this.limitarAlvo();
     this.posicionarCamera();
   }
 
@@ -305,7 +333,7 @@ export class Cena3D {
 
   centrar(x: number, z: number, distancia?: number) {
     this.alvo.set(x, 0, z);
-    if (distancia) this.distancia = distancia;
+    if (distancia) this.distancia = this.distanciaAlvo = distancia;
     this.posicionarCamera();
     this.sujo = true;
   }
@@ -390,7 +418,7 @@ export class Cena3D {
     const zs = rota.map((p) => p.z);
     const meio = { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 };
     this.alvo.set(meio.x, 0, meio.z);
-    this.distancia = Math.max(5000, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 2.2);
+    this.distancia = this.distanciaAlvo = Math.max(5000, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 2.2);
     this.posicionarCamera();
     let primeiro = true;
     for (const id of ids) {
@@ -437,6 +465,7 @@ export class Cena3D {
     this.quadro = requestAnimationFrame(this.ciclo);
     const dt = Math.min(0.05, (agora - this.antes) / 1000);
     this.antes = agora;
+    this.suavizar(dt);
     if (this.andarDireto(dt)) this.sujo = true;
     for (const b of this.bonecos.values()) if (this.passo(b, dt)) this.sujo = true;
     if (this.nuvens.visivel && agora - this.ultimaNuvem > QUADROS_DE_NUVEM_MS) {
@@ -523,9 +552,14 @@ export class Cena3D {
     const eu = this.meuId ? this.posicao(this.meuId) : null;
     const minhaZona = this.meuId ? this.bonecos.get(this.meuId)?.zona : null;
     const dentroDe = eu ? zona.predioNoPonto(eu.x, eu.z) : null;
-    lugar.grupo.visible = this.distancia < DISTANCIA_DETALHE;
-    this.continente.uRaio.value = lugar.grupo.visible ? zona.cidade.raio * INICIO_DA_BORDA : 0;
-    for (const [id, g] of this.continente.vizinhas) g.visible = !(lugar.grupo.visible && id === zona.cidade.id);
+    const detalhado = this.distancia < DISTANCIA_DETALHE;
+    const sumindo = THREE.MathUtils.smoothstep(this.distancia, DISTANCIA_DETALHE, DISTANCIA_SEM_CHAO);
+    lugar.detalhes.visible = detalhado;
+    lugar.grupo.visible = sumindo < 1;
+    lugar.material.opacity = 1 - sumindo;
+    lugar.chao.position.y = detalhado ? 0 : 2;
+    this.continente.uRaio.value = detalhado ? zona.cidade.raio * INICIO_DA_BORDA : 0;
+    for (const [id, g] of this.continente.vizinhas) g.visible = !(detalhado && id === zona.cidade.id);
     for (const v of this.continente.vias) v.visible = this.distancia > DISTANCIA_VIAS;
     for (const n of lugar.nomes) n.visible = this.distancia < DISTANCIA_NOMES_PREDIOS;
     for (const n of this.continente.nomes) {
@@ -567,6 +601,7 @@ export class Cena3D {
     this.canvas.removeEventListener("pointerup", this.aoSoltar);
     this.canvas.removeEventListener("pointercancel", this.aoSoltar);
     this.canvas.removeEventListener("wheel", this.aoRolar);
+    this.canvas.removeEventListener("contextmenu", this.semMenu);
     this.descartar(this.cena);
     this.renderer.dispose();
   }

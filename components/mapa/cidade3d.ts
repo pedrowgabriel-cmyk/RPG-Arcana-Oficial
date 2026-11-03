@@ -6,7 +6,8 @@ import * as THREE from "three";
 import { LARGURA_PORTA, faceDaPorta, dentroDoPoligono, type Zona } from "@/lib/mapa/zona";
 import type { Area, Chao, Especie, Piso, Predio, TipoArea, TipoPredio, XZ } from "@/lib/mapa/tipos";
 import { lugarPorId } from "@/lib/mapa/lugares";
-import { corDoContinente } from "./continente3d";
+import { comGrao, copiarContinente } from "./continente3d";
+import { METROS_POR_UNIDADE_DO_MAPA } from "@/lib/mapa/dados-relevo";
 import { etiqueta } from "./etiqueta";
 
 const LADO_TEXTURA = 2048;
@@ -15,7 +16,7 @@ const COR_FUNDACAO = "#6b6358";
 export const INICIO_DA_BORDA = 0.82;
 const MAX_ARVORES = 4000;
 
-const COR_CHAO: Record<Chao, string> = {
+export const COR_CHAO: Record<Chao, string> = {
   campo: "#6f7743",
   lama: "#5e4c34",
   areia: "#c9a35f",
@@ -102,7 +103,7 @@ function pintarEncostas(c: CanvasRenderingContext2D, zona: Zona) {
       img.data[p] = 112;
       img.data[p + 1] = 100;
       img.data[p + 2] = 84;
-      img.data[p + 3] = t * 235;
+      img.data[p + 3] = t * 235 * (1 - THREE.MathUtils.smoothstep(Math.hypot(x, z) / relevo.raio, 0.62, INICIO_DA_BORDA));
     }
   }
   const t = document.createElement("canvas");
@@ -166,8 +167,8 @@ function pintarChao(zona: Zona) {
   const c = canvas.getContext("2d")!;
   const px = (v: number) => ((v + cidade.raio) / (cidade.raio * 2)) * LADO_TEXTURA;
   const k = LADO_TEXTURA / (cidade.raio * 2);
-  c.fillStyle = COR_CHAO[cidade.chao];
-  c.fillRect(0, 0, LADO_TEXTURA, LADO_TEXTURA);
+  const l = lugarPorId(cidade.id);
+  copiarContinente(c, l.mx, l.my, cidade.raio / METROS_POR_UNIDADE_DO_MAPA, LADO_TEXTURA);
   pintarEncostas(c, zona);
   const trilha = (pts: readonly XZ[]) => {
     c.beginPath();
@@ -188,15 +189,7 @@ function pintarChao(zona: Zona) {
     trilha(r.pts);
     c.stroke();
   }
-  // Última faixa na cor do continente: sem isso o lugar vira um disco no mapa.
-  const l = lugarPorId(cidade.id);
-  const borda = c.createRadialGradient(LADO_TEXTURA / 2, LADO_TEXTURA / 2, LADO_TEXTURA * 0.36, LADO_TEXTURA / 2, LADO_TEXTURA / 2, LADO_TEXTURA * 0.5);
-  const cor = corDoContinente(l.mx, l.my);
-  borda.addColorStop(0, cor.replace("rgb", "rgba").replace(")", ",0)"));
-  borda.addColorStop(1, cor);
-  c.fillStyle = borda;
-  c.fillRect(0, 0, LADO_TEXTURA, LADO_TEXTURA);
-  // E a borda se dissolve no continente, que continua por baixo.
+  // A borda se dissolve no continente, que continua por baixo.
   const fim = c.createRadialGradient(LADO_TEXTURA / 2, LADO_TEXTURA / 2, LADO_TEXTURA * INICIO_DA_BORDA * 0.5, LADO_TEXTURA / 2, LADO_TEXTURA / 2, LADO_TEXTURA * 0.5);
   fim.addColorStop(0, "rgba(0,0,0,0)");
   fim.addColorStop(1, "rgba(0,0,0,1)");
@@ -360,13 +353,23 @@ function montarGruta(x: number, z: number, zona: Zona, grupo: THREE.Group) {
 }
 
 export function montarLugar(zona: Zona) {
+  const raiz = new THREE.Group();
+  // Prédios e árvores trocam de nível de detalhe juntos; o chão só some aos poucos.
   const grupo = new THREE.Group();
   const tetos: Teto[] = [];
   const nomes: THREE.Sprite[] = [];
   const { cidade } = zona;
-  const chao = new THREE.Mesh(malhaDoChao(zona), new THREE.MeshLambertMaterial({ map: pintarChao(zona), transparent: true }));
+  const material = new THREE.MeshLambertMaterial({ map: pintarChao(zona), transparent: true });
+  material.onBeforeCompile = (s) => {
+    s.vertexShader = s.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvMundo = (modelMatrix * vec4(position, 1.0)).xz;");
+    s.fragmentShader = s.fragmentShader.replace("#include <common>", "#include <common>\nvarying vec2 vMundo;");
+    comGrao(s);
+  };
+  const chao = new THREE.Mesh(malhaDoChao(zona), material);
   chao.receiveShadow = true;
-  grupo.add(chao);
+  raiz.add(chao, grupo);
   montarAgua(zona, grupo);
   for (const f of cidade.feicoes ?? []) {
     if (f.tipo === "gruta") montarGruta(f.x, f.z, zona, grupo);
@@ -376,5 +379,5 @@ export function montarLugar(zona: Zona) {
   entraveis.forEach((p, i) => nomes.push(montarEntravel(p, i, grupo, tetos, zona.relevo?.baseDe(p.id) ?? 0, zona.relevo?.fundacoes.get(p.id) ?? 0)));
   montarPredios(cidade.predios.filter((p) => !p.entravel), grupo, (p) => ({ x: p.x, z: p.z, y: zona.relevo?.baseDe(p.id) ?? 0, fundacao: zona.relevo?.fundacoes.get(p.id) ?? 0 }));
   montarArvores(zona, grupo);
-  return { grupo, chao, tetos, nomes };
+  return { grupo: raiz, detalhes: grupo, chao, material, tetos, nomes };
 }
