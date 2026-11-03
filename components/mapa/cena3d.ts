@@ -6,12 +6,14 @@
 
 import * as THREE from "three";
 import { ALTURA_MAPA, LARGURA_MAPA, METROS_POR_UNIDADE_DO_MAPA, mundoDoLugar, mundoDoMapa } from "@/lib/mapa/lugares";
+import { altitudeContinente } from "@/lib/mapa/relevo";
 import { aoAlcance, type Bloqueios } from "@/lib/mapa/mundo";
 import type { Pt } from "@/lib/mapa/geografia";
 import type { Ponto } from "@/lib/mapa/tipos";
 import { SEM_BLOQUEIOS, type Zona } from "@/lib/mapa/zona";
 import { montarContinente } from "./continente3d";
-import { montarLugar, type Teto } from "./cidade3d";
+import { INICIO_DA_BORDA, montarLugar, type Teto } from "./cidade3d";
+import { Nuvens } from "./nuvens3d";
 import { etiqueta } from "./etiqueta";
 
 const ZOOM_MIN = 22;
@@ -20,9 +22,19 @@ const DISTANCIA_ABRE_TELHADO = 90;
 const DISTANCIA_NOMES_PREDIOS = 500;
 const DISTANCIA_NOMES_MAPA = 90_000;
 const DISTANCIA_DETALHE = 120_000;
+const DISTANCIA_VIAS = 3500;
 const FIGURA_PADRAO = 70;
-const ELEVACAO = 0.95;
+const ELEVACAO_RUA = 0.5;
+const ELEVACAO_ALTO = 1.15;
 const AZIMUTE = Math.PI / 4;
+const COR_CEU = new THREE.Color("#a9c1d0");
+const COR_ALTURA = new THREE.Color("#c7d5dc");
+/** Serra real some vista de 500 km: o relevo cresce conforme o zoom abre. */
+const EXAGERO_MAXIMO = 7;
+const INICIO_EXAGERO = 150_000;
+const FIM_EXAGERO = 900_000;
+const FOLGA_DA_CAMERA = 14;
+const QUADROS_DE_NUVEM_MS = 70;
 const TOQUE_MAX_PX = 8;
 
 export type PersonagemCena = { id: string; nome: string; x: number; z: number; zona: string };
@@ -54,7 +66,12 @@ export class Cena3D {
   private origem: Ponto = { x: 0, z: 0 };
   private continente = montarContinente();
   private lugar: ReturnType<typeof montarLugar> | null = null;
-  private sol = new THREE.DirectionalLight("#ffd9a0", 2.2);
+  private sol = new THREE.DirectionalLight("#ffe2b8", 2.9);
+  private nuvens = new Nuvens();
+  private neblina = new THREE.Fog(COR_CEU, 1e7, 2e7);
+  private azimute = AZIMUTE;
+  private exagero = 1;
+  private ultimaNuvem = 0;
   private raio = new THREE.Raycaster();
   private sujo = true;
   private quadro = 0;
@@ -84,9 +101,11 @@ export class Cena3D {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: grande, powerPreference: "high-performance", logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, grande ? 2 : 1.5));
     this.renderer.shadowMap.enabled = grande;
-    this.cena.background = new THREE.Color("#1a1612");
+    this.cena.background = COR_CEU.clone();
+    this.cena.fog = this.neblina;
+    this.cena.add(this.nuvens.grupo);
 
-    this.cena.add(new THREE.HemisphereLight("#fff1d6", "#54452f", 1.7));
+    this.cena.add(new THREE.HemisphereLight("#eef4ff", "#5a4a34", 1.15));
     this.sol.castShadow = grande;
     this.sol.shadow.mapSize.set(2048, 2048);
     Object.assign(this.sol.shadow.camera, { left: -110, right: 110, top: 110, bottom: -110, far: 320 });
@@ -118,6 +137,7 @@ export class Cena3D {
     this.alvo.x += dx;
     this.alvo.z += dz;
     this.continente.grupo.position.set(-this.origem.x, 0, -this.origem.z);
+    this.continente.uOrigem.value.set(this.origem.x, this.origem.z);
     this.zona = zona;
     this.lugar = montarLugar(zona);
     this.cena.add(this.lugar.grupo);
@@ -125,8 +145,14 @@ export class Cena3D {
       b.grupo.position.x += dx;
       b.grupo.position.z += dz;
       b.rota = [];
+      this.pousar(b);
     }
     this.posicionarCamera();
+  }
+
+  private pousar(b: Boneco) {
+    const { x, z } = b.grupo.position;
+    b.grupo.position.y = b.zona === this.zona?.cidade.id ? this.zona.altura(x, z) : this.alturaDoChao(x, z);
   }
 
   private deslocamento(zona: string): Ponto {
@@ -135,18 +161,20 @@ export class Cena3D {
   }
 
   private posicionarCamera() {
-    const h = Math.cos(ELEVACAO) * this.distancia;
-    this.camera.position.set(
-      this.alvo.x + Math.sin(AZIMUTE) * h,
-      Math.sin(ELEVACAO) * this.distancia,
-      this.alvo.z + Math.cos(AZIMUTE) * h,
-    );
+    this.alvo.y = this.alturaDoChao(this.alvo.x, this.alvo.z);
+    const abertura = THREE.MathUtils.smoothstep(Math.log10(this.distancia), 2.2, 5);
+    const elevacao = THREE.MathUtils.lerp(ELEVACAO_RUA, ELEVACAO_ALTO, abertura);
+    const h = Math.cos(elevacao) * this.distancia;
+    const [cx, cz] = [this.alvo.x + Math.sin(this.azimute) * h, this.alvo.z + Math.cos(this.azimute) * h];
+    const cy = Math.max(this.alvo.y + Math.sin(elevacao) * this.distancia, this.alturaDoChao(cx, cz) + FOLGA_DA_CAMERA);
+    this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(this.alvo);
     this.camera.near = Math.max(1, this.distancia / 100);
-    this.camera.far = this.distancia * 8 + 4000;
+    this.camera.far = this.distancia * 8 + 40000;
+    this.aplicarClima();
     this.camera.updateProjectionMatrix();
     this.sol.target.position.copy(this.alvo);
-    this.sol.position.set(this.alvo.x - 70, 130, this.alvo.z + 55);
+    this.sol.position.set(this.alvo.x - 110, this.alvo.y + 95, this.alvo.z + 60);
     this.sujo = true;
   }
 
@@ -165,9 +193,16 @@ export class Cena3D {
       new THREE.Vector2(((px - caixa.left) / caixa.width) * 2 - 1, -((py - caixa.top) / caixa.height) * 2 + 1),
       this.camera,
     );
-    if (!this.lugar) return null;
-    const hit = this.raio.intersectObject(this.lugar.chao)[0];
-    return hit ? { x: hit.point.x, z: hit.point.z } : null;
+    const zona = this.zona;
+    if (!zona?.relevo) return null;
+    // Marcha pelo raio em vez de testar meio milhão de triângulos.
+    const { origin, direction } = this.raio.ray;
+    const passo = Math.max(1, this.distancia / 300);
+    for (let t = 0; t < this.distancia * 3; t += passo) {
+      const [x, y, z] = [origin.x + direction.x * t, origin.y + direction.y * t, origin.z + direction.z * t];
+      if (Math.hypot(x, z) < zona.cidade.raio && y <= zona.relevo.altura(x, z)) return { x, z };
+    }
+    return null;
   }
 
   private aoApertar = (e: PointerEvent) => {
@@ -194,9 +229,9 @@ export class Cena3D {
     const fator = (this.distancia / this.canvas.clientHeight) * 0.75;
     const dx = (e.clientX - antes.x) * fator;
     const dy = (e.clientY - antes.y) * fator * 1.3;
-    const s = Math.SQRT1_2;
-    this.alvo.x -= (dx + dy) * s;
-    this.alvo.z -= (dy - dx) * s;
+    const [sen, cos] = [Math.sin(this.azimute), Math.cos(this.azimute)];
+    this.alvo.x -= dx * cos + dy * sen;
+    this.alvo.z -= dy * cos - dx * sen;
     this.limitarAlvo();
     this.posicionarCamera();
     this.avisarOlhar();
@@ -221,6 +256,32 @@ export class Cena3D {
     this.distancia = THREE.MathUtils.clamp(this.distancia * fator, ZOOM_MIN, ZOOM_MAX);
     this.limitarAlvo();
     this.posicionarCamera();
+  }
+
+  girar(radianos: number) {
+    this.azimute += radianos;
+    this.posicionarCamera();
+  }
+
+  /** Chão sob a câmera: malha do lugar aberto, ou continente exagerado de longe. */
+  private alturaDoChao(x: number, z: number) {
+    const zona = this.zona;
+    if (zona?.relevo && Math.hypot(x, z) < zona.cidade.raio) return zona.altura(x, z);
+    const m = METROS_POR_UNIDADE_DO_MAPA;
+    return altitudeContinente((x + this.origem.x) / m + LARGURA_MAPA / 2, (z + this.origem.z) / m + ALTURA_MAPA / 2) * this.exagero;
+  }
+
+  /** Quanto mais longe, mais ar: neblina, relevo exagerado e nuvens. */
+  private aplicarClima() {
+    const d = this.distancia;
+    const fora = THREE.MathUtils.smoothstep(d, 6000, 200_000);
+    this.neblina.near = THREE.MathUtils.lerp(d * 30, d * 1.5, fora);
+    this.neblina.far = THREE.MathUtils.lerp(d * 60, d * 9, fora);
+    (this.cena.background as THREE.Color).copy(COR_CEU).lerp(COR_ALTURA, fora);
+    this.neblina.color.copy(this.cena.background as THREE.Color);
+    this.exagero = 1 + (EXAGERO_MAXIMO - 1) * THREE.MathUtils.smoothstep(d, INICIO_EXAGERO, FIM_EXAGERO);
+    this.continente.malha.scale.y = this.exagero;
+    this.nuvens.ajustar(d, this.alvo, this.origem);
   }
 
   /** Jogador olha o próprio lugar; de longe, e para o Juiz, vale o continente. */
@@ -291,7 +352,9 @@ export class Cena3D {
       const d = this.deslocamento(p.zona);
       grupo.position.set(p.x + d.x, 0, p.z + d.z);
       this.cena.add(grupo);
-      this.bonecos.set(p.id, { id: p.id, zona: p.zona, grupo, corpo, rota: [], velocidade: 0, fase: 0 });
+      const novo: Boneco = { id: p.id, zona: p.zona, grupo, corpo, rota: [], velocidade: 0, fase: 0 };
+      this.pousar(novo);
+      this.bonecos.set(p.id, novo);
     }
     this.sujo = true;
   }
@@ -311,6 +374,7 @@ export class Cena3D {
     b.rota = [];
     const d = this.deslocamento(zona);
     b.grupo.position.set(x + d.x, 0, z + d.z);
+    this.pousar(b);
     this.sujo = true;
   }
 
@@ -333,6 +397,7 @@ export class Cena3D {
       const b = this.bonecos.get(id);
       if (!b) continue;
       b.grupo.position.set(rota[0].x, 0, rota[0].z);
+      b.zona = "";
       b.rota = rota.slice(1);
       b.velocidade = total / segundos;
       b.aoChegar = primeiro ? aoChegar : undefined;
@@ -374,6 +439,11 @@ export class Cena3D {
     this.antes = agora;
     if (this.andarDireto(dt)) this.sujo = true;
     for (const b of this.bonecos.values()) if (this.passo(b, dt)) this.sujo = true;
+    if (this.nuvens.visivel && agora - this.ultimaNuvem > QUADROS_DE_NUVEM_MS) {
+      this.ultimaNuvem = agora;
+      this.nuvens.soprar(dt * 4);
+      this.sujo = true;
+    }
     if (!this.sujo) return;
     this.sujo = false;
     this.atualizarVisibilidade();
@@ -390,9 +460,9 @@ export class Cena3D {
     if (!forca || !this.podeAndar) return false;
 
     b.rota = [];
-    const s = Math.SQRT1_2;
-    const nx = (e.x + e.z) * s;
-    const nz = (e.z - e.x) * s;
+    const [sen, cos] = [Math.sin(this.azimute), Math.cos(this.azimute)];
+    const nx = e.x * cos + e.z * sen;
+    const nz = e.z * cos - e.x * sen;
     const n = Math.hypot(nx, nz) || 1;
     const passo = this.velocidadeDireta * forca * dt;
     const x = b.grupo.position.x + (nx / n) * passo;
@@ -405,6 +475,7 @@ export class Cena3D {
     else if (zona.pontoLivre(antesX, z, this.bloqueios)) b.grupo.position.z = z;
     const andou = Math.hypot(b.grupo.position.x - antesX, b.grupo.position.z - antesZ);
     if (!andou) return false;
+    this.pousar(b);
     b.fase += dt * 14;
     b.corpo.position.y = Math.abs(Math.sin(b.fase)) * 0.18;
     b.corpo.rotation.y = Math.atan2(nx, nz);
@@ -424,6 +495,7 @@ export class Cena3D {
     const passo = b.velocidade * dt;
     if (d <= passo) {
       b.grupo.position.set(proximo.x, 0, proximo.z);
+      this.pousar(b);
       b.rota.shift();
       if (!b.rota.length) {
         b.corpo.position.y = 0;
@@ -435,6 +507,7 @@ export class Cena3D {
     }
     b.grupo.position.x += (dx / d) * passo;
     b.grupo.position.z += (dz / d) * passo;
+    this.pousar(b);
     b.corpo.rotation.y = Math.atan2(dx, dz);
     b.fase += dt * 14;
     b.corpo.position.y = Math.abs(Math.sin(b.fase)) * 0.18;
@@ -451,6 +524,8 @@ export class Cena3D {
     const minhaZona = this.meuId ? this.bonecos.get(this.meuId)?.zona : null;
     const dentroDe = eu ? zona.predioNoPonto(eu.x, eu.z) : null;
     lugar.grupo.visible = this.distancia < DISTANCIA_DETALHE;
+    this.continente.uRaio.value = lugar.grupo.visible ? zona.cidade.raio * INICIO_DA_BORDA : 0;
+    for (const v of this.continente.vias) v.visible = this.distancia > DISTANCIA_VIAS;
     for (const n of lugar.nomes) n.visible = this.distancia < DISTANCIA_NOMES_PREDIOS;
     for (const n of this.continente.nomes) {
       n.visible = this.distancia > DISTANCIA_NOMES_MAPA && (n.userData.forte || this.distancia < 900_000);

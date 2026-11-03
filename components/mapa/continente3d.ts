@@ -8,21 +8,22 @@ import {
   ISLAND_DEF,
   LAKE_DEFS,
   RAILS,
-  RIDGES,
   RIVER_DEFS,
   ROADS,
   WEST_COAST,
   DECOR_LABELS,
   type Pt,
 } from "@/lib/mapa/geografia";
+import { BAIA_DE_BH, CONT_ALTURA, CONT_LARGURA } from "@/lib/mapa/dados-relevo";
+import { altitudeContinente, dadosDoContinente } from "@/lib/mapa/relevo";
 import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, mundoDoMapa } from "@/lib/mapa/lugares";
 import { etiqueta } from "./etiqueta";
 
 const PX_POR_UNIDADE = 2;
-const DIVISOES_X = 250;
-const DIVISOES_Z = 184;
-const ALTURA_SERRA = 9000; // exagerada: serra real some nesta distância
-const RAIO_PLANO = 16; // unidades do mapa: em volta de cada lugar o chão é plano
+const COR_TERRA = "#6f7743";
+const FOLGA_DAS_VIAS = 3; // unidades do mapa: em volta do lugar a rua é a da cidade
+
+let amostra: CanvasRenderingContext2D | null = null;
 
 /** Regiões de cor. Leitura das descrições do Doc 2 §5.3. */
 const BIOMAS: { x: number; y: number; rx: number; ry: number; cor: string }[] = [
@@ -44,9 +45,9 @@ function pintar() {
   const canvas = document.createElement("canvas");
   canvas.width = LARGURA_MAPA * PX_POR_UNIDADE;
   canvas.height = ALTURA_MAPA * PX_POR_UNIDADE;
-  const c = canvas.getContext("2d")!;
+  const c = canvas.getContext("2d", { willReadFrequently: true })!;
   c.scale(PX_POR_UNIDADE, PX_POR_UNIDADE);
-  c.fillStyle = "#8a8748";
+  c.fillStyle = COR_TERRA;
   c.fillRect(0, 0, LARGURA_MAPA, ALTURA_MAPA);
 
   c.filter = "blur(14px)";
@@ -75,7 +76,9 @@ function pintar() {
     c.ellipse(l.cx, l.cy, l.rx, l.ry, 0, 0, Math.PI * 2);
     c.fill();
   }
-  c.fillStyle = "#8a8748";
+  fechar(c, BAIA_DE_BH);
+  c.fill();
+  c.fillStyle = COR_TERRA;
   c.beginPath();
   c.ellipse(ISLAND_DEF.cx, ISLAND_DEF.cy, ISLAND_DEF.rx, ISLAND_DEF.ry, 0, 0, Math.PI * 2);
   c.fill();
@@ -88,72 +91,188 @@ function pintar() {
     fechar(c, r.pts);
     c.stroke();
   }
-  for (const r of ROADS) {
-    c.strokeStyle = "#c2a06a";
-    c.lineWidth = r.kind === "main" ? 2 : 1.2;
-    c.setLineDash(r.kind === "main" || r.kind === "sec" ? [] : [4, 3]);
-    fechar(c, r.pts);
-    c.stroke();
-  }
-  c.setLineDash([3, 2]);
-  c.strokeStyle = "#2a2522";
-  c.lineWidth = 1.2;
-  for (const r of RAILS) {
-    fechar(c, r);
-    c.stroke();
-  }
+  pintarRelevo(c);
+  salpicar(c);
+  amostra = c;
   const textura = new THREE.CanvasTexture(canvas);
+  textura.generateMipmaps = true;
   textura.colorSpace = THREE.SRGBColorSpace;
   textura.anisotropy = 4;
   return textura;
 }
 
-function distanciaSegmento(x: number, y: number, r: (typeof RIDGES)[number]) {
-  const dx = r.x2 - r.x1;
-  const dy = r.y2 - r.y1;
-  const t = Math.max(0, Math.min(1, ((x - r.x1) * dx + (y - r.y1) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(x - r.x1 - t * dx, y - r.y1 - t * dy);
+/** Manchas de vegetação e solo, em duas escalas: o desenho sozinho fica chapado de perto. */
+function salpicar(c: CanvasRenderingContext2D) {
+  const r = (() => {
+    let a = 91;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  })();
+  c.save();
+  c.globalCompositeOperation = "soft-light";
+  for (const [quantas, tamanho, forca] of [[3800, 18, 0.1], [42000, 2.2, 0.16]] as const) {
+    for (let i = 0; i < quantas; i++) {
+      c.fillStyle = r() > 0.5 ? `rgba(22,44,20,${forca})` : `rgba(226,204,150,${forca})`;
+      c.beginPath();
+      c.ellipse(r() * LARGURA_MAPA, r() * ALTURA_MAPA, tamanho * (0.5 + r()), tamanho * (0.3 + r() * 0.7), r() * 3, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  c.restore();
 }
 
-function altitude(mx: number, my: number) {
-  let h = 0;
-  for (const r of RIDGES) {
-    const d = distanciaSegmento(mx, my, r);
-    h = Math.max(h, Math.exp(-(d * d) / 900) * (0.75 + 0.25 * Math.sin(mx * 0.09) * Math.cos(my * 0.11)));
+/** Cor do continente num ponto do mapa, para a borda de um lugar encostar nela. */
+export function corDoContinente(mx: number, my: number) {
+  const [r, g, b] = amostra!.getImageData(mx * PX_POR_UNIDADE, my * PX_POR_UNIDADE, 1, 1).data;
+  return `rgb(${r},${g},${b})`;
+}
+
+/** Grão que repete pelo mundo: mantém o chão nítido entre a cidade e o continente. */
+function texturaDeGrao() {
+  const lado = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = lado;
+  const c = canvas.getContext("2d")!;
+  c.fillStyle = "#808080";
+  c.fillRect(0, 0, lado, lado);
+  let a = 53;
+  const r = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = 0; i < 5200; i++) {
+    const [x, y, raio] = [r() * lado, r() * lado, 3 + r() * 26];
+    const tom = r() > 0.5 ? 255 : 0;
+    const g = c.createRadialGradient(x, y, 0, x, y, raio);
+    g.addColorStop(0, `rgba(${tom},${tom},${tom},0.16)`);
+    g.addColorStop(1, `rgba(${tom},${tom},${tom},0)`);
+    c.fillStyle = g;
+    // Repete nas quatro bordas para a emenda não aparecer.
+    for (const [dx, dy] of [[0, 0], [lado, 0], [-lado, 0], [0, lado], [0, -lado]]) {
+      c.setTransform(1, 0, 0, 1, dx, dy);
+      c.fillRect(x - raio, y - raio, raio * 2, raio * 2);
+    }
   }
-  const perto = Math.min(...LUGARES.map((l) => Math.hypot(mx - l.mx, my - l.my)));
-  return h * ALTURA_SERRA * THREE.MathUtils.smoothstep(perto, RAIO_PLANO * 0.5, RAIO_PLANO);
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+/** Estradas e trilhos em linha fina: pintados na textura viram borrão de perto. */
+function montarVias() {
+  const pontosDe = (lista: readonly (readonly Pt[])[]) => {
+    const v: number[] = [];
+    for (const pts of lista) {
+      for (let i = 1; i < pts.length; i++) {
+        const [a, b] = [pts[i - 1], pts[i]];
+        const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3);
+        for (let s = 0; s < n; s++) {
+          const q = [s / n, (s + 1) / n].map((t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+          if (q.some(([x, y]) => LUGARES.some((l) => Math.hypot(x - l.mx, y - l.my) < FOLGA_DAS_VIAS))) continue;
+          for (const [x, y] of q) {
+            const p = mundoDoMapa(x, y);
+            v.push(p.x, altitudeContinente(x, y) + 30, p.z);
+          }
+        }
+      }
+    }
+    return new THREE.Float32BufferAttribute(v, 3);
+  };
+  const linha = (lista: readonly (readonly Pt[])[], cor: string) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", pontosDe(lista));
+    return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: cor }));
+  };
+  return [linha(ROADS.map((r) => r.pts), "#d7b27a"), linha(RAILS, "#1f1a18")];
+}
+
+/** Cor da altitude, por cima do desenho: rocha nas serras, neve no alto. */
+function pintarRelevo(c: CanvasRenderingContext2D) {
+  const a = dadosDoContinente();
+  const img = new ImageData(CONT_LARGURA, CONT_ALTURA);
+  for (let j = 0; j < CONT_ALTURA; j++) {
+    for (let i = 0; i < CONT_LARGURA; i++) {
+      const k = j * CONT_LARGURA + i;
+      const h = a[k];
+      const dec = (a[k + 1] ?? h) - h + ((a[k + CONT_LARGURA] ?? h) - h);
+      const p = k * 4;
+      const luz = Math.max(84, Math.min(176, 128 - dec * 0.4));
+      const neve = THREE.MathUtils.smoothstep(h, 1900, 2350);
+      img.data[p] = img.data[p + 1] = img.data[p + 2] = luz + (255 - luz) * neve;
+      img.data[p + 3] = h > 0 ? 255 : 0;
+    }
+  }
+  const t = document.createElement("canvas");
+  t.width = CONT_LARGURA;
+  t.height = CONT_ALTURA;
+  t.getContext("2d")!.putImageData(img, 0, 0);
+  c.save();
+  c.globalCompositeOperation = "overlay";
+  c.drawImage(t, 0, 0, LARGURA_MAPA, ALTURA_MAPA);
+  c.restore();
 }
 
 export function montarContinente() {
   const grupo = new THREE.Group();
+  const a = dadosDoContinente();
   const geo = new THREE.PlaneGeometry(
     LARGURA_MAPA * METROS_POR_UNIDADE_DO_MAPA,
     ALTURA_MAPA * METROS_POR_UNIDADE_DO_MAPA,
-    DIVISOES_X,
-    DIVISOES_Z,
+    CONT_LARGURA - 1,
+    CONT_ALTURA - 1,
   ).rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const mx = pos.getX(i) / METROS_POR_UNIDADE_DO_MAPA + LARGURA_MAPA / 2;
-    const my = pos.getZ(i) / METROS_POR_UNIDADE_DO_MAPA + ALTURA_MAPA / 2;
-    pos.setY(i, altitude(mx, my));
-  }
+  for (let i = 0; i < pos.count; i++) pos.setY(i, a[i]);
   geo.computeVertexNormals();
-  const malha = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: pintar() }));
-  malha.position.y = -2;
+
+  const uRaio = { value: 0 };
+  const uOrigem = { value: new THREE.Vector2() };
+  const uGrao = { value: texturaDeGrao() };
+  const material = new THREE.MeshLambertMaterial({ map: pintar() });
+  // O lugar aberto tem malha própria: o continente abre um buraco para ela.
+  material.onBeforeCompile = (s) => {
+    s.uniforms.uRaio = uRaio;
+    s.uniforms.uOrigem = uOrigem;
+    s.uniforms.uGrao = uGrao;
+    s.vertexShader = s.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvMundo = (modelMatrix * vec4(position, 1.0)).xz;");
+    s.fragmentShader = s.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;\nuniform float uRaio;\nuniform vec2 uOrigem;\nuniform sampler2D uGrao;")
+      .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (length(vMundo) < uRaio) discard;")
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        vec2 uvGrao = (vMundo + uOrigem) / 2600.0;
+        float grao = texture2D(uGrao, uvGrao).r * 0.6 + texture2D(uGrao, uvGrao / 5.3).r * 0.4;
+        diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.5;`,
+      );
+  };
+  const malha = new THREE.Mesh(geo, material);
+  const vias = montarVias();
+  malha.add(...vias);
   grupo.add(malha);
+
+  const oceano = new THREE.Mesh(new THREE.CircleGeometry(9_000_000, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: "#2c5c78" }));
+  oceano.position.y = -0.5;
+  grupo.add(oceano);
 
   const nomes: THREE.Sprite[] = [];
   const rotulo = (texto: string, mx: number, my: number, forte: boolean) => {
     const s = etiqueta(texto);
     const p = mundoDoMapa(mx, my);
-    s.position.set(p.x, 1500, p.z);
+    s.position.set(p.x, altitudeContinente(mx, my) + 2500, p.z);
     s.userData.forte = forte;
     nomes.push(s);
     grupo.add(s);
   };
   for (const l of LUGARES) rotulo(l.nome, l.mx, l.my, true);
   for (const d of DECOR_LABELS) rotulo(d.nome.replace("\n", " "), d.x, d.y, false);
-  return { grupo, nomes };
+  return { grupo, malha, nomes, uRaio, uOrigem, vias };
 }

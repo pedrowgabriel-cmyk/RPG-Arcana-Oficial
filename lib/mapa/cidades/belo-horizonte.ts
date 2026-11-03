@@ -316,6 +316,15 @@ const cidade: Cidade = {
   predios,
   ruas,
   areas,
+  // O recorte real é da capital de Minas, mas a baía é do livro: o morro desce até ela.
+  // Feições feitas à mão: a base de elevação não vê buracos nem grutas.
+  feicoes: [
+    { tipo: "vocoroca", pts: [[-1960, 760], [-1840, 900], [-1790, 1060], [-1650, 1190]], largura: 16, fundo: 16 },
+    { tipo: "vocoroca", pts: [[1180, 1750], [1270, 1840], [1300, 1980]], largura: 12, fundo: 12 },
+    { tipo: "dolina", x: -1420, z: 1720, raio: 70, fundo: 26 },
+    { tipo: "dolina", x: -1720, z: 1450, raio: 44, fundo: 18 },
+    { tipo: "gruta", x: -880, z: 2080, nome: "Gruta da Serra" },
+  ],
 };
 
 export default cidade;

@@ -8,10 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase";
 import { ENERGIA_MAX, MEIOS, custoDaViagem, descontarPassos, pontoDeChegada, type Bloqueios, type Meio } from "@/lib/mapa/mundo";
-import { LUGARES, LUGAR_INICIAL, carregarCidade, lugarPorId, mundoDoLugar } from "@/lib/mapa/lugares";
+import { LUGARES, LUGAR_INICIAL, carregarCidade, carregarZona, lugarPorId, mundoDoLugar } from "@/lib/mapa/lugares";
 import type { Ponto } from "@/lib/mapa/tipos";
 import { rotaEntreLugares } from "@/lib/mapa/viagem";
-import { SEM_BLOQUEIOS, Zona } from "@/lib/mapa/zona";
+import { SEM_BLOQUEIOS, type Zona } from "@/lib/mapa/zona";
 import type { Pt } from "@/lib/mapa/geografia";
 import { Cena3D } from "./cena3d";
 
@@ -112,7 +112,7 @@ export function MapaAoVivo({
     abrindo.current = id;
     let zona = zonas.current.get(id);
     if (!zona) {
-      zona = new Zona(await carregarCidade(id));
+      zona = await carregarZona(id);
       zonas.current.set(id, zona);
     }
     if (abrindo.current !== id || !cena.current) return null;
@@ -290,7 +290,7 @@ export function MapaAoVivo({
     if (!c) return;
     setMarchando(true);
     c.podeAndar = false;
-    const novaZona = zonas.current.get(destinoId) ?? new Zona(await carregarCidade(destinoId));
+    const novaZona = zonas.current.get(destinoId) ?? (await carregarZona(destinoId));
     zonas.current.set(destinoId, novaZona);
     c.marchar(ids, pts, SEGUNDOS_DE_MARCHA, () => {
       void (async () => {
@@ -399,6 +399,8 @@ export function MapaAoVivo({
         <div className="pointer-events-auto ml-auto flex flex-wrap justify-end gap-2">
           <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={() => cena.current?.zoom(0.75)} aria-label="Aproximar">＋</button>
           <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={() => cena.current?.zoom(1.35)} aria-label="Afastar">－</button>
+          <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={() => cena.current?.girar(-0.4)} aria-label="Girar para a esquerda">⟲</button>
+          <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={() => cena.current?.girar(0.4)} aria-label="Girar para a direita">⟳</button>
           {juiz && <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={() => setPainelAberto((v) => !v)}>Mestre</button>}
           {onFechar && <button className={`${BOTAO} bg-[rgba(12,10,16,0.92)]`} onClick={onFechar}>Fechar</button>}
         </div>

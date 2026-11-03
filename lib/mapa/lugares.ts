@@ -2,7 +2,9 @@
 // pesa no aparelho de quem está nela.
 
 import { CITIES, REGION_PLACES } from "./geografia";
+import { carregarContinente, carregarRecorte, gerarRelevo } from "./relevo";
 import type { Cidade, Ponto } from "./tipos";
+import { Zona } from "./zona";
 
 /** Decisão de campanha: 1 unidade do mapa impresso = 1 km. O livro não dá escala. */
 export const METROS_POR_UNIDADE_DO_MAPA = 1000;
@@ -56,4 +58,12 @@ export const CARREGAR: Record<string, () => Promise<{ default: Cidade }>> = {
 
 export async function carregarCidade(id: string): Promise<Cidade> {
   return (await (CARREGAR[id] ?? CARREGAR[LUGAR_INICIAL])()).default;
+}
+
+/** Lugar pronto para andar: planta mais relevo. */
+export async function carregarZona(id: string): Promise<Zona> {
+  const cidade = await carregarCidade(id);
+  const [, dem] = await Promise.all([carregarContinente(), carregarRecorte(cidade.id)]);
+  const l = lugarPorId(cidade.id);
+  return new Zona(cidade, gerarRelevo(cidade, l.mx, l.my, dem));
 }

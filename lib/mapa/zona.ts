@@ -2,6 +2,7 @@
 // cidade grande tem centenas de prédios e isto roda a cada passo.
 
 import type { Bloqueios } from "./mundo";
+import type { Relevo } from "./relevo";
 import type { Area, Cidade, Face, Ponto, Predio, Rua, XZ } from "./tipos";
 
 const FOLGA = 0.5;
@@ -11,6 +12,7 @@ const CELULA = 32;
 const PASSO_GRADE = 1;
 const MAX_NOS = 400_000;
 const PESO_HEURISTICA = 1.6;
+const INCLINACAO_MAXIMA = 1; // 45°: paredão, só passa em rua
 
 export const SEM_BLOQUEIOS: Bloqueios = { entrada: [], vista: [] };
 
@@ -58,9 +60,11 @@ export class Zona {
   private barreiras: Area[];
   readonly entraveis: Predio[];
   readonly cidade: Cidade;
+  readonly relevo: Relevo | null;
 
-  constructor(cidade: Cidade) {
+  constructor(cidade: Cidade, relevo: Relevo | null = null) {
     this.cidade = cidade;
+    this.relevo = relevo;
     for (const p of cidade.predios) {
       const [cx0, cz0] = [this.cel(p.x - p.largura / 2 - FOLGA), this.cel(p.z - p.fundo / 2 - FOLGA)];
       const [cx1, cz1] = [this.cel(p.x + p.largura / 2 + FOLGA), this.cel(p.z + p.fundo / 2 + FOLGA)];
@@ -104,7 +108,15 @@ export class Zona {
       const naParede = dx > p.largura / 2 - ESPESSURA_PAREDE - FOLGA || dz > p.fundo / 2 - ESPESSURA_PAREDE - FOLGA;
       if (naParede && !naPorta(p, x, z)) return false;
     }
+    if (this.relevo && this.relevo.inclinacao(x, z) > INCLINACAO_MAXIMA && !this.predioNoPonto(x, z) && !this.naRua(x, z, 1)) return false;
     return !this.barreiras.some((a) => dentroDoPoligono(x, z, a.pts));
+  }
+
+  /** Altura do chão; dentro de prédio vale o piso. */
+  altura(x: number, z: number) {
+    if (!this.relevo) return 0;
+    const p = this.predioNoPonto(x, z);
+    return p ? this.relevo.baseDe(p.id) : this.relevo.altura(x, z);
   }
 
   naRua(x: number, z: number, folga = 0) {

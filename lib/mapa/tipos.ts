@@ -50,6 +50,12 @@ export type Area = { tipo: TipoArea; pts: XZ[]; nome?: string };
 export type Chao = "campo" | "lama" | "areia" | "neve" | "cinzas" | "carvao" | "umido" | "pedra";
 export type Especie = "copa" | "pinheiro" | "cacto" | "seca" | "cogumelo";
 
+/** Terreno feito à mão: o que a base de elevação não mostra. */
+export type Feicao =
+  | { tipo: "dolina"; x: number; z: number; raio: number; fundo: number }
+  | { tipo: "vocoroca"; pts: XZ[]; largura: number; fundo: number }
+  | { tipo: "gruta"; x: number; z: number; nome: string };
+
 export type Cidade = {
   id: string;
   nome: string;
@@ -65,4 +71,5 @@ export type Cidade = {
   predios: Predio[];
   ruas: Rua[];
   areas: Area[];
+  feicoes?: Feicao[];
 };

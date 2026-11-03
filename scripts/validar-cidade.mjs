@@ -1,6 +1,6 @@
 // Confere um lugar do mapa: node scripts/validar-cidade.mjs <id> (ou sem id, todos).
 import { registerHooks } from "node:module";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
@@ -17,6 +17,9 @@ registerHooks({
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pasta = path.join(raiz, "lib/mapa/cidades");
 const { Zona, LARGURA_PORTA, portaDe } = await import(pathToFileURL(path.join(raiz, "lib/mapa/zona.ts")).href);
+const { definirContinente, gerarRelevo, lerBin } = await import(pathToFileURL(path.join(raiz, "lib/mapa/relevo.ts")).href);
+const { CITIES, REGION_PLACES } = await import(pathToFileURL(path.join(raiz, "lib/mapa/geografia.ts")).href);
+definirContinente(lerBin(readFileSync(path.join(raiz, "public/mapa/continente.bin"))));
 const ids = process.argv[2] ? [process.argv[2]] : readdirSync(pasta).filter((f) => f !== "kit.ts").map((f) => f.replace(".ts", ""));
 const TIPOS = "casa comercio saloon hotel igreja publico banco estacao galpao fazenda moinho fabrica torre tenda ruina".split(" ");
 const MAX_ROTA_TESTADA = 25;
@@ -43,7 +46,9 @@ for (const id of ids) {
     }
   }
   for (const a of c.areas) if (a.pts.length < 3) erros.push(`área ${a.tipo} com menos de 3 pontos`);
-  const zona = new Zona(c);
+  const l = [...CITIES, ...REGION_PLACES].find((v) => v.id === id);
+  const arqDem = path.join(raiz, `public/mapa/relevo/${id}.bin`);
+  const zona = new Zona(c, gerarRelevo(c, l.x, l.y, existsSync(arqDem) ? lerBin(readFileSync(arqDem)) : null));
   if (!zona.pontoLivre(c.chegada.x, c.chegada.z)) erros.push("chegada bloqueada");
   const portas = c.predios.filter((p) => p.entravel);
   for (const p of portas) {
