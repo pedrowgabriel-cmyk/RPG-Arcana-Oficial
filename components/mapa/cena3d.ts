@@ -13,11 +13,12 @@ import type { Ponto } from "@/lib/mapa/tipos";
 import { SEM_BLOQUEIOS, type Zona } from "@/lib/mapa/zona";
 import { montarContinente } from "./continente3d";
 import { INICIO_DA_BORDA, montarLugar, type Teto } from "./cidade3d";
-import { Nuvens } from "./nuvens3d";
+import type { Clima } from "@/lib/mapa/clima";
+import { Nuvens, type CeuLocal } from "./nuvens3d";
 import { etiqueta } from "./etiqueta";
 
 const ZOOM_MIN = 22;
-const ZOOM_MAX = 75_000;
+const ZOOM_MAX = 110_000;
 const DISTANCIA_ABRE_TELHADO = 90;
 const DISTANCIA_NOMES_PREDIOS = 500;
 const DISTANCIA_NOMES_MAPA = 3200;
@@ -31,7 +32,8 @@ const GIRO_POR_PIXEL = 0.006;
 const FIGURA_PADRAO = 70;
 const ELEVACAO_RUA = 0.5;
 const ELEVACAO_ALTO = 1.15;
-const AZIMUTE = Math.PI / 4;
+/** Norte para cima, como o mapa impresso. */
+const AZIMUTE = 0;
 const COR_CEU = new THREE.Color("#a9c1d0");
 const COR_ALTURA = new THREE.Color("#c7d5dc");
 /** De longe a serra achata: o relevo cresce um pouco conforme o zoom abre. */
@@ -39,7 +41,12 @@ const EXAGERO_MAXIMO = 1.7;
 const INICIO_EXAGERO = 12_000;
 const FIM_EXAGERO = 60_000;
 const FOLGA_DA_CAMERA = 14;
-const QUADROS_DE_NUVEM_MS = 70;
+const QUADROS_DE_CEU_MS = 45;
+/** Teto do passo por quadro: alto o bastante para celular lento não andar devagar. */
+const PASSO_MAXIMO_S = 0.12;
+const COR_TEMPORAL = new THREE.Color("#6f7a84");
+const LUZ_DO_SOL = 3.2;
+const LUZ_DO_CEU = 1.15;
 const TOQUE_MAX_PX = 8;
 
 export type PersonagemCena = { id: string; nome: string; x: number; z: number; zona: string };
@@ -79,7 +86,9 @@ export class Cena3D {
   private distanciaAlvo = 120;
   private torcao: number | null = null;
   private exagero = 1;
-  private ultimaNuvem = 0;
+  private ultimoCeu = 0;
+  private ceu: CeuLocal = { nuvens: 0, chuva: 0, vento: 0, tempestade: 0, relampago: 0 };
+  private luzDoCeu = new THREE.HemisphereLight("#eef4ff", "#5a4a34", LUZ_DO_CEU);
   private raio = new THREE.Raycaster();
   private sujo = true;
   private quadro = 0;
@@ -113,7 +122,7 @@ export class Cena3D {
     this.cena.fog = this.neblina;
     this.cena.add(this.nuvens.grupo);
 
-    this.cena.add(new THREE.HemisphereLight("#eef4ff", "#5a4a34", 1.15));
+    this.cena.add(this.luzDoCeu);
     this.sol.castShadow = grande;
     this.sol.shadow.mapSize.set(2048, 2048);
     Object.assign(this.sol.shadow.camera, { left: -110, right: 110, top: 110, bottom: -110, far: 320 });
@@ -304,12 +313,30 @@ export class Cena3D {
     const d = this.distancia;
     const fora = THREE.MathUtils.smoothstep(d, 3500, 40_000);
     this.neblina.near = THREE.MathUtils.lerp(d * 30, d * 1.5, fora);
-    this.neblina.far = THREE.MathUtils.lerp(d * 60, d * 7, fora);
+    this.neblina.far = THREE.MathUtils.lerp(d * 60, d * 7, fora) * (1 - 0.55 * THREE.MathUtils.smoothstep(d, 45_000, 110_000));
     (this.cena.background as THREE.Color).copy(COR_CEU).lerp(COR_ALTURA, fora);
-    this.neblina.color.copy(this.cena.background as THREE.Color);
     this.exagero = 1 + (EXAGERO_MAXIMO - 1) * THREE.MathUtils.smoothstep(d, INICIO_EXAGERO, FIM_EXAGERO);
     this.continente.malha.scale.y = this.exagero;
-    this.nuvens.ajustar(d, this.alvo, this.origem);
+    this.aplicarTempo();
+  }
+
+  /** Tempo fechado escurece a luz, acinzenta o céu e fecha a neblina; relâmpago clareia tudo. */
+  private aplicarTempo() {
+    const { nuvens, chuva, tempestade, relampago } = this.ceu;
+    const sombra = Math.min(1, nuvens * 0.45 + chuva * 0.25 + tempestade * 0.3);
+    this.sol.intensity = LUZ_DO_SOL * (1 - sombra * 0.8) + relampago * 4;
+    this.luzDoCeu.intensity = LUZ_DO_CEU * (1 - sombra * 0.35) + relampago * 2.5;
+    const fundo = this.cena.background as THREE.Color;
+    fundo.lerp(COR_TEMPORAL, sombra * 0.7);
+    this.neblina.color.copy(fundo);
+    const fecha = 1 - chuva * 0.55;
+    this.neblina.near *= fecha;
+    this.neblina.far *= fecha;
+  }
+
+  definirClima(clima: Clima) {
+    this.nuvens.definir(clima);
+    this.ultimoCeu = 0;
   }
 
   /** Jogador olha o próprio lugar; de longe, e para o Juiz, vale o continente. */
@@ -463,15 +490,19 @@ export class Cena3D {
 
   private ciclo = (agora: number) => {
     this.quadro = requestAnimationFrame(this.ciclo);
-    const dt = Math.min(0.05, (agora - this.antes) / 1000);
+    const dt = Math.min(PASSO_MAXIMO_S, (agora - this.antes) / 1000);
     this.antes = agora;
     this.suavizar(dt);
     if (this.andarDireto(dt)) this.sujo = true;
     for (const b of this.bonecos.values()) if (this.passo(b, dt)) this.sujo = true;
-    if (this.nuvens.visivel && agora - this.ultimaNuvem > QUADROS_DE_NUVEM_MS) {
-      this.ultimaNuvem = agora;
-      this.nuvens.soprar(dt * 4);
-      this.sujo = true;
+    if (agora - this.ultimoCeu > QUADROS_DE_CEU_MS) {
+      const passou = Math.min(0.2, (agora - (this.ultimoCeu || agora - QUADROS_DE_CEU_MS)) / 1000);
+      this.ultimoCeu = agora;
+      this.ceu = this.nuvens.atualizar(passou, this.distancia, this.alvo, this.origem);
+      if (this.nuvens.ativo || this.ceu.nuvens > 0.05) {
+        this.aplicarClima();
+        this.sujo = true;
+      }
     }
     if (!this.sujo) return;
     this.sujo = false;

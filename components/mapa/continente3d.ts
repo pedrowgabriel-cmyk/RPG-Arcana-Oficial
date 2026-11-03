@@ -14,7 +14,7 @@ import {
   DECOR_LABELS,
   type Pt,
 } from "@/lib/mapa/geografia";
-import { CONT_ALTURA, CONT_LARGURA } from "@/lib/mapa/dados-relevo";
+import { CONT_ALTURA, CONT_LARGURA, CONT_PASSO } from "@/lib/mapa/dados-relevo";
 import { altitudeContinente, dadosDoContinente } from "@/lib/mapa/relevo";
 import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, cidadesCarregadas, lugarPorId, mundoDoMapa } from "@/lib/mapa/lugares";
 import type { XZ } from "@/lib/mapa/tipos";
@@ -22,6 +22,8 @@ import { COR_AREA, COR_CHAO, COR_PISO, montarPredios } from "./cidade3d";
 import { etiqueta } from "./etiqueta";
 
 const PX_POR_UNIDADE = 4;
+/** Metros em que a borda do mapa se mistura com a terra de fora. */
+const BORDA_DESFEITA = 3200;
 const ARVORES = 9000;
 const COR_TERRA = "#6f7743";
 const FOLGA_DAS_VIAS = 24; // unidades do mapa: em volta do lugar a rua é a da cidade
@@ -150,19 +152,20 @@ function pintarCidades(c: CanvasRenderingContext2D) {
     const raio = cidade.raio * k;
     const rgb = new THREE.Color(COR_CHAO[cidade.chao]);
     const cor = `${Math.round(rgb.r * 255)},${Math.round(rgb.g * 255)},${Math.round(rgb.b * 255)}`;
-    for (let i = 0; i < 70; i++) {
-      const [ang, d, e] = [semente() * Math.PI * 2, Math.sqrt(semente()) * raio * 1.05, raio * (0.2 + semente() * 0.4)];
+    for (let i = 0; i < 90; i++) {
+      const [ang, d, e] = [semente() * Math.PI * 2, Math.sqrt(semente()) * raio * 1.1, raio * (0.3 + semente() * 0.5)];
       const [x, y] = [l.mx + Math.cos(ang) * d, l.my + Math.sin(ang) * d];
       const g = c.createRadialGradient(x, y, 0, x, y, e);
-      g.addColorStop(0, `rgba(${cor},0.34)`);
+      g.addColorStop(0, `rgba(${cor},0.16)`);
       g.addColorStop(1, `rgba(${cor},0)`);
       c.fillStyle = g;
       c.fillRect(x - e, y - e, e * 2, e * 2);
     }
+    // Áreas suaves: vistas do alto, retângulos fortes viram remendo.
     for (const a of cidade.areas) {
       if (a.tipo === "agua") continue;
       c.fillStyle = COR_AREA[a.tipo];
-      c.globalAlpha = 0.8;
+      c.globalAlpha = 0.42;
       trilha(a.pts);
       c.closePath();
       c.fill();
@@ -252,7 +255,7 @@ export function comGrao(s: THREE.WebGLProgramParametersWithUniforms) {
       `#include <map_fragment>
       vec2 uvGrao = (vMundo + uOrigem) / 260.0;
       float grao = texture2D(uGrao, uvGrao).r * 0.6 + texture2D(uGrao, uvGrao / 5.3).r * 0.4;
-      diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.5;`,
+      diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.0;`,
     );
 }
 
@@ -260,6 +263,127 @@ export function comGrao(s: THREE.WebGLProgramParametersWithUniforms) {
 export function copiarContinente(destino: CanvasRenderingContext2D, mx: number, my: number, raioEmUnidades: number, lado: number) {
   const px = PX_POR_UNIDADE;
   destino.drawImage(amostra!.canvas, (mx - raioEmUnidades) * px, (my - raioEmUnidades) * px, raioEmUnidades * 2 * px, raioEmUnidades * 2 * px, 0, 0, lado, lado);
+}
+
+/** Fora do mapa: o resto do país ao norte e a leste, mar ao sul e a oeste. Dá para ver, não para ir. */
+function montarAlemDoMapa(uRaio: { value: number }) {
+  const PASSO = 12;
+  const [x0, x1, y0, y1] = [-LARGURA_MAPA * 2, LARGURA_MAPA * 3, -ALTURA_MAPA * 2, ALTURA_MAPA * 3];
+  const [nx, ny] = [(x1 - x0) / PASSO, (y1 - y0) / PASSO];
+  const geo = new THREE.PlaneGeometry((x1 - x0) * METROS_POR_UNIDADE_DO_MAPA, (y1 - y0) * METROS_POR_UNIDADE_DO_MAPA, nx, ny).rotateX(-Math.PI / 2);
+  geo.translate(((x0 + x1) / 2 - LARGURA_MAPA / 2) * METROS_POR_UNIDADE_DO_MAPA, 0, ((y0 + y1) / 2 - ALTURA_MAPA / 2) * METROS_POR_UNIDADE_DO_MAPA);
+  const pos = geo.attributes.position;
+  const cores = new Float32Array(pos.count * 3);
+  const [rocha, neve, areia] = ["#7a7064", "#e6eaec", "#c8b07a"].map((c) => new THREE.Color(c));
+  const cor = new THREE.Color();
+  // A cor nasce da borda do mapa: lê o chão pintado do continente, reduzido.
+  const reduzido = document.createElement("canvas");
+  [reduzido.width, reduzido.height] = [LARGURA_MAPA / 2, ALTURA_MAPA / 2];
+  const rc = reduzido.getContext("2d", { willReadFrequently: true })!;
+  rc.drawImage(amostra!.canvas, 0, 0, reduzido.width, reduzido.height);
+  const pixels = rc.getImageData(0, 0, reduzido.width, reduzido.height).data;
+  // Versão bem borrada: longe da borda vale a média da região, não a última linha esticada.
+  const borrado = document.createElement("canvas");
+  [borrado.width, borrado.height] = [25, 18];
+  const bc = borrado.getContext("2d", { willReadFrequently: true })!;
+  bc.drawImage(reduzido, 0, 0, borrado.width, borrado.height);
+  const media = bc.getImageData(0, 0, borrado.width, borrado.height).data;
+  const ler = (dados: Uint8ClampedArray, w: number, h: number, u: number, v: number, alvo: THREE.Color) => {
+    const [x, y] = [Math.max(0, Math.min(w - 1.001, u * w - 0.5)), Math.max(0, Math.min(h - 1.001, v * h - 0.5))];
+    const [i, j] = [Math.floor(x), Math.floor(y)];
+    const [fx, fy] = [x - i, y - j];
+    const canal = (c: number) => {
+      const k = (a: number, b: number) => dados[((j + b) * w + i + a) * 4 + c];
+      return (k(0, 0) * (1 - fx) * (1 - fy) + k(1, 0) * fx * (1 - fy) + k(0, 1) * (1 - fx) * fy + k(1, 1) * fx * fy) / 255;
+    };
+    return alvo.setRGB(canal(0), canal(1), canal(2), THREE.SRGBColorSpace);
+  };
+  // Longe da borda a paisagem é própria: a média do mapa variando em todas as direções,
+  // em vez da cor da borda esticada (que vira faixa).
+  const mediaDoMapa = new THREE.Color(0, 0, 0);
+  for (let k = 0; k < media.length; k += 4) mediaDoMapa.r += media[k] / 255 / (media.length / 4);
+  for (let k = 1; k < media.length; k += 4) mediaDoMapa.g += media[k] / 255 / (media.length / 4);
+  for (let k = 2; k < media.length; k += 4) mediaDoMapa.b += media[k] / 255 / (media.length / 4);
+  mediaDoMapa.convertSRGBToLinear();
+  const [mato, cerrado] = ["#4f6234", "#8a7d4c"].map((c) => new THREE.Color(c));
+  const longe = new THREE.Color();
+  const corDaBorda = (cx: number, cy: number, solto: number, mx: number, my: number) => {
+    ler(pixels, reduzido.width, reduzido.height, cx / LARGURA_MAPA, cy / ALTURA_MAPA, cor);
+    longe.copy(mediaDoMapa).lerp(mato, ruidoFora(mx / 45, my / 45, 21) * 0.55).lerp(cerrado, ruidoFora(mx / 18, my / 18, 23) * 0.35);
+    return cor.lerp(longe, THREE.MathUtils.smoothstep(solto, 0, 0.8));
+  };
+  const alturas = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const mx = pos.getX(i) / METROS_POR_UNIDADE_DO_MAPA + LARGURA_MAPA / 2;
+    const my = pos.getZ(i) / METROS_POR_UNIDADE_DO_MAPA + ALTURA_MAPA / 2;
+    const [cx, cy] = [Math.max(0, Math.min(LARGURA_MAPA, mx)), Math.max(0, Math.min(ALTURA_MAPA, my))];
+    const borda = Math.hypot(mx - cx, my - cy);
+    // Costa de fora continua a do mapa: sobe para noroeste no oeste e para nordeste no leste.
+    const ruido = (ruidoFora(mx / 40, my / 40) - 0.5) * 60;
+    let costa = Infinity;
+    if (mx < 0) costa = 95 + mx * 0.55 + ruido - my;
+    else if (mx > LARGURA_MAPA) costa = 320 + (mx - LARGURA_MAPA) * 0.25 + ruido - my;
+    else if (my > ALTURA_MAPA) costa = -1;
+    // Fora do mapa a borda é lida com média ao longo dela, para não esticar o relevo em sulcos.
+    const espalha = Math.min(borda * 0.9, 60);
+    const ao = (dx: number, dy: number) => altitudeContinente(Math.max(0, Math.min(LARGURA_MAPA, cx + dx)), Math.max(0, Math.min(ALTURA_MAPA, cy + dy)));
+    const dentro = borda === 0 ? altitudeContinente(cx, cy) : (ao(0, 0) + ao(espalha, 0) + ao(-espalha, 0) + ao(0, espalha) + ao(0, -espalha)) / 5;
+    // O relevo de fora nasce do da borda e só ganha força longe dela.
+    const solto = THREE.MathUtils.smoothstep(borda, 0, 45);
+    let h: number;
+    if (costa < 0) h = -40;
+    else {
+      const serra = Math.pow(1 - Math.abs(2 * ruidoFora(mx / 70, my / 70, 9) - 1), 2);
+      const proprio = 60 + ruidoFora(mx / 110, my / 110, 3) * 240 + serra * 300;
+      h = (Math.max(dentro, 2) + (proprio - Math.max(dentro, 2)) * solto) * THREE.MathUtils.smoothstep(costa, 0, 40);
+    }
+    // Por baixo do mapa fica rente a ele: é o que aparece onde a borda do mapa se desfaz.
+    if (borda === 0) h = dentro - 0.8;
+    pos.setY(i, h);
+    alturas[i] = h;
+    corDaBorda(cx, cy, solto, mx, my);
+    // Varia devagar em volta da cor da borda, sem virar outra paisagem.
+    const variacao = 0.88 + ruidoFora(mx / 30, my / 30, 5) * 0.24;
+    cor.multiplyScalar(1 - solto + solto * variacao);
+    if (h < 0) cor.copy(areia).multiplyScalar(0.6);
+    else cor.lerp(rocha, THREE.MathUtils.smoothstep(h, 430, 620) * solto * 0.6).lerp(neve, THREE.MathUtils.smoothstep(h, 560, 660) * solto);
+    cores.set([cor.r, cor.g, cor.b], i * 3);
+  }
+  // Mesmo sombreamento que o continente tem pintado na textura.
+  const linha = nx + 1;
+  for (let i = 0; i < pos.count; i++) {
+    const declive = ((alturas[i + 1] ?? alturas[i]) - alturas[i] + ((alturas[i + linha] ?? alturas[i]) - alturas[i])) / (PASSO / CONT_PASSO);
+    const luz = THREE.MathUtils.clamp(1 - declive * 0.011, 0.66, 1.18);
+    for (let c = 0; c < 3; c++) cores[i * 3 + c] *= luz;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(cores, 3));
+  geo.computeVertexNormals();
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  material.onBeforeCompile = (s) => {
+    abrirBuraco(s, uRaio, false);
+    comGrao(s);
+  };
+  return new THREE.Mesh(geo, material);
+}
+
+function ruidoFora(x: number, y: number, seed = 0) {
+  const h = (i: number, j: number) => {
+    let n = Math.imul(i, 374761393) + Math.imul(j, 668265263) + seed * 1013;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+  };
+  let [s, a, t] = [0, 0.5, 0];
+  for (let o = 0; o < 4; o++) {
+    const [i, j] = [Math.floor(x), Math.floor(y)];
+    const [fx, fy] = [x - i, y - j];
+    const [u, v] = [fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)];
+    s += a * (h(i, j) * (1 - u) * (1 - v) + h(i + 1, j) * u * (1 - v) + h(i, j + 1) * (1 - u) * v + h(i + 1, j + 1) * u * v);
+    t += a;
+    x *= 2.03;
+    y *= 2.03;
+    a *= 0.5;
+  }
+  return s / t;
 }
 
 /** Grão que repete pelo mundo: mantém o chão nítido entre a cidade e o continente. */
@@ -368,11 +492,24 @@ export function montarContinente() {
   material.onBeforeCompile = (s) => {
     abrirBuraco(s, uRaio, false);
     comGrao(s);
+    // A borda do mapa se desfaz em manchas sobre a terra de fora, sem linha reta.
+    s.uniforms.uMeioMapa = { value: new THREE.Vector2((LARGURA_MAPA * METROS_POR_UNIDADE_DO_MAPA) / 2, (ALTURA_MAPA * METROS_POR_UNIDADE_DO_MAPA) / 2) };
+    s.fragmentShader = s.fragmentShader
+      .replace("uniform vec2 uOrigem;", "uniform vec2 uOrigem;\nuniform vec2 uMeioMapa;")
+      .replace(
+        "#include <clipping_planes_fragment>\nif (length(vMundo) < uRaio) discard;",
+        `#include <clipping_planes_fragment>
+        if (length(vMundo) < uRaio) discard;
+        vec2 abs_ = abs(vMundo + uOrigem);
+        float ate = min(uMeioMapa.x - abs_.x, uMeioMapa.y - abs_.y) / ${BORDA_DESFEITA.toFixed(1)};
+        float mancha = texture2D(uGrao, (vMundo + uOrigem) / 9000.0).r + texture2D(uGrao, (vMundo + uOrigem) / 2300.0).r * 0.5;
+        if (ate < 1.0 && ate + (mancha - 0.75) * 1.3 < 0.5) discard;`,
+      );
   };
   const malha = new THREE.Mesh(geo, material);
   const vias = montarVias();
   const vizinhas = montarVizinhas();
-  malha.add(...vias, montarMatas(uRaio), ...vizinhas.values());
+  malha.add(...vias, montarMatas(uRaio), ...vizinhas.values(), montarAlemDoMapa(uRaio));
   grupo.add(malha);
 
   const oceano = new THREE.Mesh(new THREE.CircleGeometry(400_000, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: "#2c5c78" }));

@@ -13,6 +13,7 @@ import type { Ponto } from "@/lib/mapa/tipos";
 import { rotaEntreLugares } from "@/lib/mapa/viagem";
 import { SEM_BLOQUEIOS, type Zona } from "@/lib/mapa/zona";
 import type { Pt } from "@/lib/mapa/geografia";
+import { CAMPOS_DO_TEMPO, CLIMA_PADRAO, OPCOES_DE_REGIAO, PREDEFINIDOS, climaValido, type Clima, type Tempo } from "@/lib/mapa/clima";
 import { Cena3D } from "./cena3d";
 
 type Figura = { id: string; nome: string; x: number; z: number; energia: number; zona: string };
@@ -24,6 +25,8 @@ const JOYSTICK_RAIO = 44;
 const SEGUNDOS_DE_MARCHA = 8;
 const RAIO_TROCA_DE_LUGAR = 70; // unidades do mapa
 const VISTA_DO_LUGAR = 900;
+const ENVIO_DO_CLIMA_MS = 150;
+const GRAVACAO_DO_CLIMA_MS = 900;
 
 function Joystick({ aoMudar }: { aoMudar: (x: number, z: number) => void }) {
   const [pino, setPino] = useState({ x: 0, y: 0 });
@@ -98,6 +101,10 @@ export function MapaAoVivo({
   const [destino, setDestino] = useState("");
   const [grupo, setGrupo] = useState<string[]>([]);
   const [marchando, setMarchando] = useState(false);
+  const [clima, setClima] = useState<Clima>(CLIMA_PADRAO);
+  const [regiaoDoClima, setRegiaoDoClima] = useState("geral");
+  const ultimoEnvioDoClima = useRef(0);
+  const gravacaoDoClima = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const figurasRef = useRef(figuras);
   const bloqueiosRef = useRef(bloqueios);
@@ -127,6 +134,10 @@ export function MapaAoVivo({
     cena.current?.sincronizar(Object.values(figuras));
     if (eu && cena.current) cena.current.podeAndar = (figuras[eu.id]?.energia ?? 0) > 0;
   }, [figuras, eu]);
+  useEffect(() => {
+    cena.current?.definirClima(clima);
+  }, [clima]);
+
   useEffect(() => {
     bloqueiosRef.current = bloqueios;
     cena.current?.definirBloqueios(bloqueios);
@@ -208,6 +219,9 @@ export function MapaAoVivo({
       await abrirLugar(primeira);
       setFiguras((atuais) => ({ ...salvo, ...atuais }));
       if (estado?.bloqueios) setBloqueios(estado.bloqueios as Bloqueios);
+      // Consulta separada: sem a migration 011 o resto do mapa segue funcionando.
+      const { data: tempo } = await supabase.from("mapa_estado").select("clima").eq("session_id", sessionId).maybeSingle();
+      if (vivo && climaValido(tempo?.clima)) setClima(tempo.clima);
       if (eu && salvo[eu.id]) c.centrar(salvo[eu.id].x, salvo[eu.id].z, 60);
       else c.centrar(0, 0, VISTA_DO_LUGAR);
     })();
@@ -229,6 +243,9 @@ export function MapaAoVivo({
         c.percorrer(r.id, r.rota, r.velocidade);
       })
       .on("broadcast", { event: "bloqueios" }, ({ payload }) => setBloqueios(payload as Bloqueios))
+      .on("broadcast", { event: "clima" }, ({ payload }) => {
+        if (climaValido(payload)) setClima(payload);
+      })
       .on("broadcast", { event: "viagem" }, ({ payload }) => {
         const v = payload as { ids: string[]; destino: string; pts: Pt[] };
         void receberViagem(v.ids, v.destino, v.pts);
@@ -260,6 +277,38 @@ export function MapaAoVivo({
     enviar("rota", { ...novo, rota: viagem.rota, velocidade });
     cena.current?.percorrer(eu.id, viagem.rota, velocidade, () => guardar(novo));
     setViagem(null);
+  }
+
+  /** Juiz muda o tempo: a cena se ajusta já, a mesa recebe em pacotes curtos e o banco grava no fim. */
+  function mudarClima(novo: Clima) {
+    setClima(novo);
+    const agora = performance.now();
+    if (agora - ultimoEnvioDoClima.current > ENVIO_DO_CLIMA_MS) {
+      ultimoEnvioDoClima.current = agora;
+      enviar("clima", novo);
+    }
+    if (gravacaoDoClima.current) clearTimeout(gravacaoDoClima.current);
+    gravacaoDoClima.current = setTimeout(() => {
+      enviar("clima", novo);
+      void supabase
+        .from("mapa_estado")
+        .upsert({ session_id: sessionId, clima: novo, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) setAviso("Clima não salvo: rode a migration 011 no Supabase.");
+        });
+    }, GRAVACAO_DO_CLIMA_MS);
+  }
+
+  const tempoDaRegiao: Tempo = regiaoDoClima === "geral" ? clima.geral : clima.regioes[regiaoDoClima] ?? clima.geral;
+
+  function mudarTempo(t: Tempo) {
+    mudarClima(regiaoDoClima === "geral" ? { ...clima, geral: t } : { ...clima, regioes: { ...clima.regioes, [regiaoDoClima]: t } });
+  }
+
+  function limparRegiao() {
+    const regioes = { ...clima.regioes };
+    delete regioes[regiaoDoClima];
+    mudarClima({ ...clima, regioes });
   }
 
   function ajustarEnergia(id: string, delta: number) {
@@ -466,6 +515,55 @@ export function MapaAoVivo({
               </li>
             ))}
           </ul>
+          <h2 className="mt-4 font-cinzel text-xs uppercase tracking-[0.2em] text-arcana-gold-bright">Clima</h2>
+          <select value={regiaoDoClima} onChange={(e) => setRegiaoDoClima(e.target.value)} aria-label="Região do clima" className="arcana-input mt-2 w-full font-crimson text-base">
+            {OPCOES_DE_REGIAO.map((o) => (
+              <option key={o.id} value={o.id}>{o.nome}{o.id !== "geral" && clima.regioes[o.id] ? " ·" : ""}</option>
+            ))}
+          </select>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {PREDEFINIDOS.map((p) => (
+              <button key={p.id} className={`${BOTAO} px-2.5 py-1.5`} onClick={() => mudarTempo(p.tempo)}>
+                {p.nome}
+              </button>
+            ))}
+          </div>
+          {CAMPOS_DO_TEMPO.map((c) => (
+            <label key={c.id} className="mt-2 block font-crimson text-sm">
+              <span className="flex justify-between">
+                <span>{c.nome}</span>
+                <span className="tabular-nums text-arcana-gold-bright">{Math.round(tempoDaRegiao[c.id] * 100)}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(tempoDaRegiao[c.id] * 100)}
+                onChange={(e) => mudarTempo({ ...tempoDaRegiao, [c.id]: Number(e.target.value) / 100 })}
+                className="w-full accent-[#d4af37]"
+              />
+            </label>
+          ))}
+          <label className="mt-2 block font-crimson text-sm">
+            <span className="flex justify-between">
+              <span>Vento sopra para</span>
+              <span className="tabular-nums text-arcana-gold-bright">{["N", "NE", "L", "SE", "S", "SO", "O", "NO"][Math.round(clima.ventoDirecao / 45) % 8]}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={359}
+              value={Math.round(((clima.ventoDirecao % 360) + 360) % 360)}
+              onChange={(e) => mudarClima({ ...clima, ventoDirecao: Number(e.target.value) })}
+              className="w-full accent-[#d4af37]"
+            />
+          </label>
+          {regiaoDoClima !== "geral" && clima.regioes[regiaoDoClima] && (
+            <button className={`${BOTAO} mt-2 w-full`} onClick={limparRegiao}>
+              Voltar ao tempo geral
+            </button>
+          )}
+
           <h2 className="mt-4 font-cinzel text-xs uppercase tracking-[0.2em] text-arcana-gold-bright">Viagem</h2>
           <ul className="mt-2 space-y-1">
             {Object.values(figuras).map((f) => (
