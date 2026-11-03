@@ -2,9 +2,11 @@
 // Dias por jornada são decisão de campanha (Doc 2 §10.9).
 
 import { ROADS, type Pt } from "./geografia";
-import { lugarPorId, METROS_POR_UNIDADE_DO_MAPA } from "./lugares";
+import { lugarPorId } from "./lugares";
 
 export const KM_POR_DIA = { pe: 30, cavalo: 50 };
+/** O mundo do jogo é comprimido; as distâncias contadas na mesa, não. */
+const KM_DA_HISTORIA = 1;
 
 const JUNCAO = 3;
 
@@ -13,7 +15,7 @@ type No = { p: Pt; arestas: { para: number; pts: Pt[]; km: number }[] };
 function comprimento(pts: readonly Pt[]) {
   let d = 0;
   for (let i = 1; i < pts.length; i++) d += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-  return (d * METROS_POR_UNIDADE_DO_MAPA) / 1000;
+  return d * KM_DA_HISTORIA;
 }
 
 function montarGrafo() {

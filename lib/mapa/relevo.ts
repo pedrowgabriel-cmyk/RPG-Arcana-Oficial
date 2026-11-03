@@ -3,7 +3,7 @@
 // fundação de prédio, água e feições feitas à mão. Na borda volta ao continente,
 // para a malha do lugar encostar na do mapa sem degrau.
 
-import { CONT_ALTURA, CONT_LARGURA, CONT_PASSO, RECORTES, RECORTE_LADO } from "./dados-relevo";
+import { CONT_ALTURA, CONT_LARGURA, CONT_PASSO, METROS_POR_UNIDADE_DO_MAPA, RECORTES, RECORTE_LADO } from "./dados-relevo";
 import type { Chao, Cidade, XZ } from "./tipos";
 
 const PASSO_MINIMO = 6;
@@ -11,7 +11,7 @@ const PONTOS_MAXIMOS = 512;
 const DESNIVEL_DE_RIO = 8;
 const INICIO_DA_EMENDA = 0.8;
 const ALTITUDE_DE_COSTA = 30;
-const AMPLITUDE: Record<Chao, number> = { campo: 16, lama: 12, areia: 26, neve: 60, cinzas: 16, carvao: 22, umido: 8, pedra: 34 };
+const AMPLITUDE: Record<Chao, number> = { campo: 12, lama: 8, areia: 18, neve: 34, cinzas: 12, carvao: 16, umido: 6, pedra: 24 };
 
 let continente: Int16Array | null = null;
 let carregando: Promise<void> | null = null;
@@ -170,7 +170,7 @@ export function gerarRelevo(cidade: Cidade, mx: number, my: number, dem: Int16Ar
   const base = new Float32Array(h.length);
   const recorte = RECORTES[cidade.id];
   const amp = AMPLITUDE[cidade.chao];
-  const km = 1000;
+  const km = METROS_POR_UNIDADE_DO_MAPA;
 
   r.varrer(-raio, -raio, raio, raio, (k, x, z) => {
     const c = altitudeContinente(mx + x / km, my + z / km);
@@ -233,6 +233,7 @@ export function gerarRelevo(cidade: Cidade, mx: number, my: number, dem: Int16Ar
         h[k] = nivel - (grande ? 9 : 2.5);
         return;
       }
+      if (base[k] <= 0) return;
       let d = Infinity;
       for (let i = 0, j = a.pts.length - 1; i < a.pts.length; j = i++) d = Math.min(d, aoSegmento(x, z, a.pts[j], a.pts[i]));
       if (d < margem) h[k] = nivel + 1.2 + (h[k] - nivel - 1.2) * suave(0, margem, d);

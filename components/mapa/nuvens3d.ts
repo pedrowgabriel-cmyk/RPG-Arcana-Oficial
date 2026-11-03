@@ -5,11 +5,11 @@ import * as THREE from "three";
 import { ALTURA_MAPA, LARGURA_MAPA, METROS_POR_UNIDADE_DO_MAPA } from "@/lib/mapa/lugares";
 import type { Ponto } from "@/lib/mapa/tipos";
 
-const LADO_REGIONAL = 70_000;
+const LADO_REGIONAL = 8000;
 const POR_REGIAO = 54;
 const POR_CONTINENTE = 110;
-const ALTITUDE_REGIONAL = 3200;
-const ALTITUDE_CONTINENTE = 26_000;
+const ALTITUDE_REGIONAL = 760;
+const ALTITUDE_CONTINENTE = 1900;
 
 function prng(seed: number) {
   let a = seed;
@@ -67,7 +67,7 @@ export class Nuvens {
 
     for (let i = 0; i < POR_REGIAO; i++) {
       const sprite = new THREE.Sprite(this.matRegional[i % 3]);
-      const e = 5000 + r() * 11000;
+      const e = 420 + r() * 1000;
       sprite.scale.set(e * 1.6, e, 1);
       sprite.renderOrder = 20;
       this.regional.push({ sprite, x: r() * LADO_REGIONAL, z: r() * LADO_REGIONAL });
@@ -76,7 +76,7 @@ export class Nuvens {
     const [lx, lz] = [LARGURA_MAPA * METROS_POR_UNIDADE_DO_MAPA, ALTURA_MAPA * METROS_POR_UNIDADE_DO_MAPA];
     for (let i = 0; i < POR_CONTINENTE; i++) {
       const sprite = new THREE.Sprite(this.matContinente[i % 3]);
-      const e = 50_000 + r() * 130_000;
+      const e = 3000 + r() * 8500;
       sprite.scale.set(e * 1.7, e, 1);
       sprite.renderOrder = 20;
       this.continental.push({ sprite, x: (r() - 0.5) * lx * 1.15, z: (r() - 0.5) * lz * 1.15 });
@@ -88,17 +88,17 @@ export class Nuvens {
     this.distancia = distancia;
     this.alvo.copy(alvo);
     this.origem = origem;
-    const perto = THREE.MathUtils.smoothstep(distancia, 2800, 11_000) * (1 - THREE.MathUtils.smoothstep(distancia, 70_000, 170_000));
-    const longe = THREE.MathUtils.smoothstep(distancia, 60_000, 170_000) * (1 - 0.45 * THREE.MathUtils.smoothstep(distancia, 400_000, 1_200_000));
-    for (const m of this.matRegional) m.opacity = perto * 0.6;
-    for (const m of this.matContinente) m.opacity = longe * 0.8;
+    const perto = THREE.MathUtils.smoothstep(distancia, 1800, 5500) * (1 - THREE.MathUtils.smoothstep(distancia, 7000, 20_000));
+    const longe = THREE.MathUtils.smoothstep(distancia, 6000, 20_000) * (1 - 0.45 * THREE.MathUtils.smoothstep(distancia, 25_000, 70_000));
+    for (const m of this.matRegional) m.opacity = perto * 0.42;
+    for (const m of this.matContinente) m.opacity = longe * 0.55;
     this.visivel = perto + longe > 0.01;
     this.grupo.visible = this.visivel;
     if (this.visivel) this.posicionar();
   }
 
   soprar(metros: number) {
-    this.vento += metros * 40;
+    this.vento += metros * 3;
     this.posicionar();
   }
 

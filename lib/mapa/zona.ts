@@ -12,7 +12,7 @@ const CELULA = 32;
 const PASSO_GRADE = 1;
 const MAX_NOS = 400_000;
 const PESO_HEURISTICA = 1.6;
-const INCLINACAO_MAXIMA = 1; // 45°: paredão, só passa em rua
+const INCLINACAO_MAXIMA = 1.4; // 54°: paredão, só passa em rua
 
 export const SEM_BLOQUEIOS: Bloqueios = { entrada: [], vista: [] };
 

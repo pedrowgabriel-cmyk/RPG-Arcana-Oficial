@@ -3,7 +3,6 @@
 // malha própria, porque abrem o telhado.
 
 import * as THREE from "three";
-import type { Relevo } from "@/lib/mapa/relevo";
 import { LARGURA_PORTA, faceDaPorta, dentroDoPoligono, type Zona } from "@/lib/mapa/zona";
 import type { Area, Chao, Especie, Piso, Predio, TipoArea, TipoPredio, XZ } from "@/lib/mapa/tipos";
 import { lugarPorId } from "@/lib/mapa/lugares";
@@ -26,7 +25,7 @@ const COR_CHAO: Record<Chao, string> = {
   umido: "#4c5a3c",
   pedra: "#8b8373",
 };
-const COR_PISO: Record<Piso, string> = {
+export const COR_PISO: Record<Piso, string> = {
   terra: "#a98c5e",
   pedra: "#8f8a80",
   lama: "#4f3f2b",
@@ -35,7 +34,7 @@ const COR_PISO: Record<Piso, string> = {
   madeira: "#6b4a2c",
   trilho: "#3a3430",
 };
-const COR_AREA: Record<TipoArea, string> = {
+export const COR_AREA: Record<TipoArea, string> = {
   agua: "#2c5c78",
   rochas: "#6e675d",
   lavoura: "#6f7a34",
@@ -266,21 +265,22 @@ function montarEntravel(p: Predio, n: number, grupo: THREE.Group, tetos: Teto[],
   return nome;
 }
 
-function montarFechados(lista: Predio[], grupo: THREE.Group, relevo: Relevo | null) {
+/** Caixa e telhado em instância; `onde` diz a posição: local no lugar, global no continente. */
+export function montarPredios(lista: Predio[], grupo: THREE.Group, onde: (p: Predio) => { x: number; z: number; y: number; fundacao: number }) {
   if (!lista.length) return;
-  const base = (p: Predio) => relevo?.baseDe(p.id) ?? 0;
-  const fundacao = (p: Predio) => relevo?.fundacoes.get(p.id) ?? 0;
   const caixas = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ color: "#fff" }), lista.length);
   const comTelhado = lista.filter((p) => !SEM_TELHADO.includes(p.tipo));
   const telhados = new THREE.InstancedMesh(prismaUnitario(), new THREE.MeshLambertMaterial({ color: "#fff", side: THREE.DoubleSide }), Math.max(1, comTelhado.length));
   const m = new THREE.Matrix4();
   lista.forEach((p, i) => {
-    m.makeScale(p.largura, p.altura + fundacao(p), p.fundo).setPosition(p.x, base(p) - fundacao(p), p.z);
+    const o = onde(p);
+    m.makeScale(p.largura, p.altura + o.fundacao, p.fundo).setPosition(o.x, o.y - o.fundacao, o.z);
     caixas.setMatrixAt(i, m);
     caixas.setColorAt(i, corDe(p, i));
   });
   comTelhado.forEach((p, i) => {
-    m.makeScale(p.largura * 1.06, 2.4, p.fundo * 1.06).setPosition(p.x, base(p) + p.altura, p.z);
+    const o = onde(p);
+    m.makeScale(p.largura * 1.06, 2.4, p.fundo * 1.06).setPosition(o.x, o.y + p.altura, o.z);
     telhados.setMatrixAt(i, m);
     telhados.setColorAt(i, new THREE.Color(COR_TELHADO[p.tipo] ?? ["#6e3a2a", "#7a4630", "#5f3426"][i % 3]));
   });
@@ -374,7 +374,7 @@ export function montarLugar(zona: Zona) {
 
   const entraveis = cidade.predios.filter((p) => p.entravel);
   entraveis.forEach((p, i) => nomes.push(montarEntravel(p, i, grupo, tetos, zona.relevo?.baseDe(p.id) ?? 0, zona.relevo?.fundacoes.get(p.id) ?? 0)));
-  montarFechados(cidade.predios.filter((p) => !p.entravel), grupo, zona.relevo);
+  montarPredios(cidade.predios.filter((p) => !p.entravel), grupo, (p) => ({ x: p.x, z: p.z, y: zona.relevo?.baseDe(p.id) ?? 0, fundacao: zona.relevo?.fundacoes.get(p.id) ?? 0 }));
   montarArvores(zona, grupo);
   return { grupo, chao, tetos, nomes };
 }

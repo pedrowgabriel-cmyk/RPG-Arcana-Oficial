@@ -1,13 +1,13 @@
 // Os 16 lugares no continente e a carga sob demanda de cada um: uma cidade só
 // pesa no aparelho de quem está nela.
 
+import { METROS_POR_UNIDADE_DO_MAPA, POSICAO_3D } from "./dados-relevo";
 import { CITIES, REGION_PLACES } from "./geografia";
 import { carregarContinente, carregarRecorte, gerarRelevo } from "./relevo";
 import type { Cidade, Ponto } from "./tipos";
 import { Zona } from "./zona";
 
-/** Decisão de campanha: 1 unidade do mapa impresso = 1 km. O livro não dá escala. */
-export const METROS_POR_UNIDADE_DO_MAPA = 1000;
+export { METROS_POR_UNIDADE_DO_MAPA } from "./dados-relevo";
 export const LARGURA_MAPA = 1000;
 export const ALTURA_MAPA = 736;
 export const LUGAR_INICIAL = "tupaciguara";
@@ -19,8 +19,8 @@ const NOMES: Record<string, string> = { celestes: "Celestes" };
 export const LUGARES: Lugar[] = [...CITIES, ...REGION_PLACES].map((l) => ({
   id: l.id,
   nome: NOMES[l.id] ?? l.nome.replace("\n", " "),
-  mx: l.x,
-  my: l.y,
+  mx: POSICAO_3D[l.id]?.x ?? l.x,
+  my: POSICAO_3D[l.id]?.y ?? l.y,
 }));
 
 export function lugarPorId(id: string): Lugar {
@@ -58,6 +58,18 @@ export const CARREGAR: Record<string, () => Promise<{ default: Cidade }>> = {
 
 export async function carregarCidade(id: string): Promise<Cidade> {
   return (await (CARREGAR[id] ?? CARREGAR[LUGAR_INICIAL])()).default;
+}
+
+let todas: Cidade[] = [];
+
+/** Plantas de todos os lugares: as vizinhas aparecem de longe. */
+export async function carregarTodas() {
+  if (!todas.length) todas = await Promise.all(LUGARES.map((l) => carregarCidade(l.id)));
+  return todas;
+}
+
+export function cidadesCarregadas() {
+  return todas;
 }
 
 /** Lugar pronto para andar: planta mais relevo. */

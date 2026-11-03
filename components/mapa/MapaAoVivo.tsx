@@ -22,7 +22,7 @@ const BOTAO = "rounded-xl border border-arcana-border px-3 py-2 font-cinzel text
 const PAINEL = "rounded-2xl border border-arcana-gold/40 bg-[rgb(12,10,16)] p-3 text-arcana-text";
 const JOYSTICK_RAIO = 44;
 const SEGUNDOS_DE_MARCHA = 8;
-const RAIO_TROCA_DE_LUGAR = 30; // unidades do mapa
+const RAIO_TROCA_DE_LUGAR = 70; // unidades do mapa
 const VISTA_DO_LUGAR = 900;
 
 function Joystick({ aoMudar }: { aoMudar: (x: number, z: number) => void }) {
@@ -332,7 +332,8 @@ export function MapaAoVivo({
     c.aoOlhar = (mx, my) => {
       if (espera) clearTimeout(espera);
       espera = setTimeout(() => {
-        const perto = LUGARES.find((l) => Math.hypot(l.mx - mx, l.my - my) < RAIO_TROCA_DE_LUGAR);
+        const dist = (l: { mx: number; my: number }) => Math.hypot(l.mx - mx, l.my - my);
+        const perto = [...LUGARES].sort((a, b) => dist(a) - dist(b)).find((l) => dist(l) < RAIO_TROCA_DE_LUGAR);
         if (perto && perto.id !== c.zona?.cidade.id) void abrirLugar(perto.id);
       }, 300);
     };

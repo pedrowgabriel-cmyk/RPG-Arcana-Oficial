@@ -20,7 +20,7 @@ registerHooks({
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = await import(pathToFileURL(path.join(raiz, "lib/mapa/geografia.ts")).href);
-const { BAIA_DE_BH, CONT_LARGURA, CONT_ALTURA, CONT_PASSO, RECORTE_LADO, RECORTES, REGIAO_REAL } = await import(pathToFileURL(path.join(raiz, "lib/mapa/dados-relevo.ts")).href);
+const { CONT_LARGURA, CONT_ALTURA, CONT_PASSO, METROS_POR_UNIDADE_DO_MAPA: M, POSICAO_3D, RECORTE_LADO, RECORTES, REGIAO_REAL } = await import(pathToFileURL(path.join(raiz, "lib/mapa/dados-relevo.ts")).href);
 
 /* ── Ruído ── */
 function ruido2(x, y, seed) {
@@ -74,18 +74,29 @@ function aLinha(x, y, pts) {
 const MAR_OESTE = [...G.WEST_COAST, [755, 736], [0, 736]];
 const MAR_LESTE = [...G.EAST_COAST, [1000, 736], [1000, 320]];
 // O livro põe Santo Ozório na costa; o traçado 2D o deixa dentro do mar.
-const PENINSULA_OZORIO = [[39.6, 268], [70, 282], [108, 298]];
-const LUGARES = [...G.CITIES, ...G.REGION_PLACES];
+const PENINSULA_OZORIO = [[40, 268], [70, 282], [108, 298]];
+const LUGARES = [...G.CITIES, ...G.REGION_PLACES].map((l) => ({ ...l, ...POSICAO_3D[l.id] }));
+for (const l of LUGARES) l.cidade = (await import(pathToFileURL(path.join(raiz, `lib/mapa/cidades/${l.id}.ts`)).href)).default;
+
+// O mar de quem está na costa vem da própria planta, para a cidade e o continente baterem.
+const area = (pts) => pts.reduce((s, p, i) => s + p[0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * p[1], 0);
+const COSTEIRAS = ["belo-horizonte", "santo-ozorio"].map((id) => {
+  const l = LUGARES.find((v) => v.id === id);
+  const agua = l.cidade.areas.filter((a) => a.tipo === "agua").sort((a, b) => Math.abs(area(b.pts)) - Math.abs(area(a.pts)))[0];
+  // A planta só vai até a borda do lugar; a baía continua até o mar aberto.
+  const pts = id === "belo-horizonte" ? [[7000, -7000], [1500, -6500], ...agua.pts.slice(1, -1), [1700, 5800], [7000, 6500]] : agua.pts;
+  return { pts: pts.map(([x, z]) => [l.x + x / M, l.y + z / M]) };
+});
 
 function ehMar(x, y) {
-  if (aLinha(x, y, PENINSULA_OZORIO) < 3) return x < 38.6;
-  if (noPoligono(x, y, BAIA_DE_BH)) return true;
-  if (LUGARES.some((l) => Math.hypot(x - l.x, y - l.y) < 2.2)) return false;
+  if (COSTEIRAS.some((c) => noPoligono(x, y, c.pts))) return true;
+  if (aLinha(x, y, PENINSULA_OZORIO) < 12) return false;
+  if (LUGARES.some((l) => Math.hypot(x - l.x, y - l.y) < l.cidade.raio / M)) return false;
   if (Math.hypot((x - G.ISLAND_DEF.cx) / G.ISLAND_DEF.rx, (y - G.ISLAND_DEF.cy) / G.ISLAND_DEF.ry) < 1) return false;
   return noPoligono(x, y, MAR_OESTE) || noPoligono(x, y, MAR_LESTE);
 }
 
-const COSTAS = [G.WEST_COAST, G.EAST_COAST, [...BAIA_DE_BH, BAIA_DE_BH[0]], [[38.6, 240], [38.6, 300]]];
+const COSTAS = [G.WEST_COAST, G.EAST_COAST, ...COSTEIRAS.map((c) => [...c.pts, c.pts[0]])];
 const CHAPADAS = [{ x: 246, y: 152, rx: 58, ry: 34, alto: 1250 }];
 const BAIXADAS = [
   { x: 305, y: 458, r: 62, fundo: 330 }, // Vale do Sacramento
@@ -93,7 +104,7 @@ const BAIXADAS = [
   { x: 560, y: 508, r: 78, fundo: 180 }, // Sertão de Fungos, úmido
   { x: 671, y: 72, r: 24, fundo: 980 }, // vale de Maria da Fé, entre montanhas
 ];
-const CANIONS = [[[110, 670], [150, 648], [172, 632], [205, 604], [228, 560]]]; // Ravina Vermelha
+const CANIONS = [[[140, 690], [180, 670], [205, 650], [238, 622], [262, 576]]]; // Ravina Vermelha
 
 function altitude(x, y) {
   let costa = Infinity;
@@ -124,6 +135,14 @@ function altitude(x, y) {
     const corpo = Math.exp(-(d * d) / 420);
     h += corpo * neve * (420 + 760 * crista(x / 17, y / 17, 40 + i) * crista(x / 6, y / 6, 50 + i));
   });
+  // Caricatura: a altura total cai para caber no mundo menor e o morro ganha ritmo.
+  const perto = Math.min(...LUGARES.map((l) => Math.hypot(x - l.x, y - l.y) / (l.cidade.raio / M)));
+  const movimento = suave(0, 40, costa) * (0.3 + 0.7 * suave(0.7, 2, perto));
+  h = 6 + h * 0.24;
+  h += (fbm(x / 62, y / 62, 71) - 0.5) * 460 * movimento;
+  h += (crista(x / 24, y / 24, 72) - 0.55) * 240 * movimento;
+  h += (fbm(x / 8, y / 8, 73) - 0.5) * 56 * movimento;
+
   for (const c of CANIONS) {
     const d = aLinha(x + (fbm(x / 9, y / 9, 61) - 0.5) * 14, y, c);
     h -= (1 - suave(1, 7, d)) * Math.min(420, h * 0.75);
@@ -134,7 +153,7 @@ function altitude(x, y) {
   }
   for (const l of G.LAKE_DEFS) {
     const d = Math.hypot((x - l.cx) / l.rx, (y - l.cy) / l.ry);
-    const nivel = l.cy < 150 ? 1330 : l.cx > 400 ? 640 : 900;
+    const nivel = l.cy < 150 ? 330 : l.cx > 400 ? 150 : 215;
     h = h + (nivel - h) * (1 - suave(0.9, 1.5, d));
   }
   return Math.max(1, h);
@@ -239,11 +258,11 @@ for (const [id, r] of Object.entries(RECORTES)) {
       const d = Math.hypot(x - l.x, y - l.y);
       const k = j * CONT_LARGURA + i;
       if (d > REGIAO_REAL || alts[k] <= 0) continue;
-      const real = (await amostra(r.lat - ((y - l.y) * 1000) / mLat, r.lon + ((x - l.x) * 1000) / mLon, 10)) - r.altitudeBase;
+      const real = (await amostra(r.lat - ((y - l.y) * M) / mLat, r.lon + ((x - l.x) * M) / mLon, 12)) - r.altitudeBase;
       let costa = Infinity;
       for (const c of COSTAS) costa = Math.min(costa, aLinha(x, y, c));
       const peso = 1 - suave(REGIAO_REAL * 0.6, REGIAO_REAL, d);
-      alts[k] = Math.round(Math.max(1, alts[k] * (1 - peso) + Math.max(1, real) * suave(0, 3.5, costa) * peso));
+      alts[k] = Math.round(Math.max(1, alts[k] * (1 - peso) + Math.max(1, real) * suave(0, 6, costa) * peso));
     }
   }
 }

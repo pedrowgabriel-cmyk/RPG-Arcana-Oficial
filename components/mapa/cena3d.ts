@@ -17,22 +17,22 @@ import { Nuvens } from "./nuvens3d";
 import { etiqueta } from "./etiqueta";
 
 const ZOOM_MIN = 22;
-const ZOOM_MAX = 1_400_000;
+const ZOOM_MAX = 75_000;
 const DISTANCIA_ABRE_TELHADO = 90;
 const DISTANCIA_NOMES_PREDIOS = 500;
-const DISTANCIA_NOMES_MAPA = 90_000;
-const DISTANCIA_DETALHE = 120_000;
-const DISTANCIA_VIAS = 3500;
+const DISTANCIA_NOMES_MAPA = 3200;
+const DISTANCIA_DETALHE = 9000;
+const DISTANCIA_VIAS = 1400;
 const FIGURA_PADRAO = 70;
 const ELEVACAO_RUA = 0.5;
 const ELEVACAO_ALTO = 1.15;
 const AZIMUTE = Math.PI / 4;
 const COR_CEU = new THREE.Color("#a9c1d0");
 const COR_ALTURA = new THREE.Color("#c7d5dc");
-/** Serra real some vista de 500 km: o relevo cresce conforme o zoom abre. */
-const EXAGERO_MAXIMO = 7;
-const INICIO_EXAGERO = 150_000;
-const FIM_EXAGERO = 900_000;
+/** De longe a serra achata: o relevo cresce um pouco conforme o zoom abre. */
+const EXAGERO_MAXIMO = 1.7;
+const INICIO_EXAGERO = 12_000;
+const FIM_EXAGERO = 60_000;
 const FOLGA_DA_CAMERA = 14;
 const QUADROS_DE_NUVEM_MS = 70;
 const TOQUE_MAX_PX = 8;
@@ -66,7 +66,7 @@ export class Cena3D {
   private origem: Ponto = { x: 0, z: 0 };
   private continente = montarContinente();
   private lugar: ReturnType<typeof montarLugar> | null = null;
-  private sol = new THREE.DirectionalLight("#ffe2b8", 2.9);
+  private sol = new THREE.DirectionalLight("#ffe2b8", 3.2);
   private nuvens = new Nuvens();
   private neblina = new THREE.Fog(COR_CEU, 1e7, 2e7);
   private azimute = AZIMUTE;
@@ -162,7 +162,7 @@ export class Cena3D {
 
   private posicionarCamera() {
     this.alvo.y = this.alturaDoChao(this.alvo.x, this.alvo.z);
-    const abertura = THREE.MathUtils.smoothstep(Math.log10(this.distancia), 2.2, 5);
+    const abertura = THREE.MathUtils.smoothstep(Math.log10(this.distancia), 2.2, 4.6);
     const elevacao = THREE.MathUtils.lerp(ELEVACAO_RUA, ELEVACAO_ALTO, abertura);
     const h = Math.cos(elevacao) * this.distancia;
     const [cx, cz] = [this.alvo.x + Math.sin(this.azimute) * h, this.alvo.z + Math.cos(this.azimute) * h];
@@ -170,11 +170,11 @@ export class Cena3D {
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(this.alvo);
     this.camera.near = Math.max(1, this.distancia / 100);
-    this.camera.far = this.distancia * 8 + 40000;
+    this.camera.far = this.distancia * 8 + 30000;
     this.aplicarClima();
     this.camera.updateProjectionMatrix();
     this.sol.target.position.copy(this.alvo);
-    this.sol.position.set(this.alvo.x - 110, this.alvo.y + 95, this.alvo.z + 60);
+    this.sol.position.set(this.alvo.x - 130, this.alvo.y + 70, this.alvo.z + 70);
     this.sujo = true;
   }
 
@@ -274,9 +274,9 @@ export class Cena3D {
   /** Quanto mais longe, mais ar: neblina, relevo exagerado e nuvens. */
   private aplicarClima() {
     const d = this.distancia;
-    const fora = THREE.MathUtils.smoothstep(d, 6000, 200_000);
+    const fora = THREE.MathUtils.smoothstep(d, 3500, 40_000);
     this.neblina.near = THREE.MathUtils.lerp(d * 30, d * 1.5, fora);
-    this.neblina.far = THREE.MathUtils.lerp(d * 60, d * 9, fora);
+    this.neblina.far = THREE.MathUtils.lerp(d * 60, d * 7, fora);
     (this.cena.background as THREE.Color).copy(COR_CEU).lerp(COR_ALTURA, fora);
     this.neblina.color.copy(this.cena.background as THREE.Color);
     this.exagero = 1 + (EXAGERO_MAXIMO - 1) * THREE.MathUtils.smoothstep(d, INICIO_EXAGERO, FIM_EXAGERO);
@@ -390,7 +390,7 @@ export class Cena3D {
     const zs = rota.map((p) => p.z);
     const meio = { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 };
     this.alvo.set(meio.x, 0, meio.z);
-    this.distancia = Math.max(60_000, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 2.2);
+    this.distancia = Math.max(5000, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 2.2);
     this.posicionarCamera();
     let primeiro = true;
     for (const id of ids) {
@@ -525,10 +525,11 @@ export class Cena3D {
     const dentroDe = eu ? zona.predioNoPonto(eu.x, eu.z) : null;
     lugar.grupo.visible = this.distancia < DISTANCIA_DETALHE;
     this.continente.uRaio.value = lugar.grupo.visible ? zona.cidade.raio * INICIO_DA_BORDA : 0;
+    for (const [id, g] of this.continente.vizinhas) g.visible = !(lugar.grupo.visible && id === zona.cidade.id);
     for (const v of this.continente.vias) v.visible = this.distancia > DISTANCIA_VIAS;
     for (const n of lugar.nomes) n.visible = this.distancia < DISTANCIA_NOMES_PREDIOS;
     for (const n of this.continente.nomes) {
-      n.visible = this.distancia > DISTANCIA_NOMES_MAPA && (n.userData.forte || this.distancia < 900_000);
+      n.visible = this.distancia > DISTANCIA_NOMES_MAPA && (n.userData.forte || this.distancia < 42_000);
       const e = this.distancia / 26;
       n.scale.set(e * 5.7, e, 1);
     }

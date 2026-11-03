@@ -14,14 +14,17 @@ import {
   DECOR_LABELS,
   type Pt,
 } from "@/lib/mapa/geografia";
-import { BAIA_DE_BH, CONT_ALTURA, CONT_LARGURA } from "@/lib/mapa/dados-relevo";
+import { CONT_ALTURA, CONT_LARGURA } from "@/lib/mapa/dados-relevo";
 import { altitudeContinente, dadosDoContinente } from "@/lib/mapa/relevo";
-import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, mundoDoMapa } from "@/lib/mapa/lugares";
+import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, cidadesCarregadas, lugarPorId, mundoDoMapa } from "@/lib/mapa/lugares";
+import type { XZ } from "@/lib/mapa/tipos";
+import { COR_AREA, COR_PISO, montarPredios } from "./cidade3d";
 import { etiqueta } from "./etiqueta";
 
-const PX_POR_UNIDADE = 2;
+const PX_POR_UNIDADE = 4;
+const ARVORES = 9000;
 const COR_TERRA = "#6f7743";
-const FOLGA_DAS_VIAS = 3; // unidades do mapa: em volta do lugar a rua é a da cidade
+const FOLGA_DAS_VIAS = 24; // unidades do mapa: em volta do lugar a rua é a da cidade
 
 let amostra: CanvasRenderingContext2D | null = null;
 
@@ -76,8 +79,6 @@ function pintar() {
     c.ellipse(l.cx, l.cy, l.rx, l.ry, 0, 0, Math.PI * 2);
     c.fill();
   }
-  fechar(c, BAIA_DE_BH);
-  c.fill();
   c.fillStyle = COR_TERRA;
   c.beginPath();
   c.ellipse(ISLAND_DEF.cx, ISLAND_DEF.cy, ISLAND_DEF.rx, ISLAND_DEF.ry, 0, 0, Math.PI * 2);
@@ -93,6 +94,7 @@ function pintar() {
   }
   pintarRelevo(c);
   salpicar(c);
+  pintarCidades(c);
   amostra = c;
   const textura = new THREE.CanvasTexture(canvas);
   textura.generateMipmaps = true;
@@ -114,7 +116,7 @@ function salpicar(c: CanvasRenderingContext2D) {
   })();
   c.save();
   c.globalCompositeOperation = "soft-light";
-  for (const [quantas, tamanho, forca] of [[3800, 18, 0.1], [42000, 2.2, 0.16]] as const) {
+  for (const [quantas, tamanho, forca] of [[3800, 18, 0.1], [60000, 1.6, 0.15]] as const) {
     for (let i = 0; i < quantas; i++) {
       c.fillStyle = r() > 0.5 ? `rgba(22,44,20,${forca})` : `rgba(226,204,150,${forca})`;
       c.beginPath();
@@ -129,6 +131,96 @@ function salpicar(c: CanvasRenderingContext2D) {
 export function corDoContinente(mx: number, my: number) {
   const [r, g, b] = amostra!.getImageData(mx * PX_POR_UNIDADE, my * PX_POR_UNIDADE, 1, 1).data;
   return `rgb(${r},${g},${b})`;
+}
+
+/** Ruas e áreas de cada lugar direto no chão do continente: vistas de longe, as cidades existem. */
+function pintarCidades(c: CanvasRenderingContext2D) {
+  const k = 1 / METROS_POR_UNIDADE_DO_MAPA;
+  c.save();
+  c.lineCap = "round";
+  c.lineJoin = "round";
+  for (const cidade of cidadesCarregadas()) {
+    const l = lugarPorId(cidade.id);
+    const trilha = (pts: readonly XZ[]) => {
+      c.beginPath();
+      pts.forEach(([x, z], i) => (i ? c.lineTo(l.mx + x * k, l.my + z * k) : c.moveTo(l.mx + x * k, l.my + z * k)));
+    };
+    for (const a of cidade.areas) {
+      if (a.tipo === "agua") continue;
+      c.fillStyle = COR_AREA[a.tipo];
+      c.globalAlpha = 0.8;
+      trilha(a.pts);
+      c.closePath();
+      c.fill();
+    }
+    c.globalAlpha = 1;
+    for (const r of cidade.ruas) {
+      c.strokeStyle = COR_PISO[r.piso];
+      c.lineWidth = Math.max(0.2, r.largura * k);
+      trilha(r.pts);
+      c.stroke();
+    }
+  }
+  c.restore();
+}
+
+/** Abre o buraco do lugar detalhado em qualquer material do continente. */
+function abrirBuraco(s: THREE.WebGLProgramParametersWithUniforms, uRaio: { value: number }, instanciado: boolean) {
+  s.uniforms.uRaio = uRaio;
+  const matriz = instanciado ? "modelMatrix * instanceMatrix" : "modelMatrix";
+  s.vertexShader = s.vertexShader
+    .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;")
+    .replace("#include <begin_vertex>", `#include <begin_vertex>\nvMundo = (${matriz} * vec4(position, 1.0)).xz;`);
+  s.fragmentShader = s.fragmentShader
+    .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;\nuniform float uRaio;")
+    .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (length(vMundo) < uRaio) discard;");
+}
+
+/** Mata do continente: densa nas manchas do mapa oficial, solta no resto. */
+function montarMatas(uRaio: { value: number }) {
+  let a = 77;
+  const r = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const material = new THREE.MeshLambertMaterial({ color: "#3b5533", flatShading: true });
+  material.onBeforeCompile = (s) => abrirBuraco(s, uRaio, true);
+  const copas = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), material, ARVORES);
+  const m = new THREE.Matrix4();
+  let n = 0;
+  for (let i = 0; i < ARVORES * 3 && n < ARVORES; i++) {
+    const noBosque = r() < 0.8;
+    const f = FOREST_BLOBS[Math.floor(r() * FOREST_BLOBS.length)];
+    const ang = r() * Math.PI * 2;
+    const d = Math.sqrt(r());
+    const [mx, my] = noBosque ? [f.cx + Math.cos(ang) * d * f.rx, f.cy + Math.sin(ang) * d * f.ry] : [r() * LARGURA_MAPA, r() * ALTURA_MAPA];
+    const h = altitudeContinente(mx, my);
+    if (h < 3 || h > 620) continue;
+    const p = mundoDoMapa(mx, my);
+    const e = 16 + r() * 22;
+    m.makeScale(e, e * 1.4, e).setPosition(p.x, h + e, p.z);
+    copas.setMatrixAt(n++, m);
+  }
+  copas.count = n;
+  return copas;
+}
+
+/** Prédios de todos os lugares em versão leve, para as vizinhas aparecerem no horizonte. */
+function montarVizinhas() {
+  const mapa = new Map<string, THREE.Object3D>();
+  for (const cidade of cidadesCarregadas()) {
+    const l = lugarPorId(cidade.id);
+    if (!cidade.predios.length) continue;
+    const g = new THREE.Group();
+    montarPredios(cidade.predios, g, (p) => {
+      const q = mundoDoMapa(l.mx + p.x / METROS_POR_UNIDADE_DO_MAPA, l.my + p.z / METROS_POR_UNIDADE_DO_MAPA);
+      return { x: q.x, z: q.z, y: altitudeContinente(l.mx + p.x / METROS_POR_UNIDADE_DO_MAPA, l.my + p.z / METROS_POR_UNIDADE_DO_MAPA), fundacao: 3 };
+    });
+    mapa.set(cidade.id, g);
+  }
+  return mapa;
 }
 
 /** Grão que repete pelo mundo: mantém o chão nítido entre a cidade e o continente. */
@@ -202,8 +294,8 @@ function pintarRelevo(c: CanvasRenderingContext2D) {
       const h = a[k];
       const dec = (a[k + 1] ?? h) - h + ((a[k + CONT_LARGURA] ?? h) - h);
       const p = k * 4;
-      const luz = Math.max(84, Math.min(176, 128 - dec * 0.4));
-      const neve = THREE.MathUtils.smoothstep(h, 1900, 2350);
+      const luz = Math.max(58, Math.min(198, 128 - dec * 1.8));
+      const neve = THREE.MathUtils.smoothstep(h, 660, 860);
       img.data[p] = img.data[p + 1] = img.data[p + 2] = luz + (255 - luz) * neve;
       img.data[p + 3] = h > 0 ? 255 : 0;
     }
@@ -237,29 +329,26 @@ export function montarContinente() {
   const material = new THREE.MeshLambertMaterial({ map: pintar() });
   // O lugar aberto tem malha própria: o continente abre um buraco para ela.
   material.onBeforeCompile = (s) => {
-    s.uniforms.uRaio = uRaio;
+    abrirBuraco(s, uRaio, false);
     s.uniforms.uOrigem = uOrigem;
     s.uniforms.uGrao = uGrao;
-    s.vertexShader = s.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvMundo = (modelMatrix * vec4(position, 1.0)).xz;");
     s.fragmentShader = s.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vMundo;\nuniform float uRaio;\nuniform vec2 uOrigem;\nuniform sampler2D uGrao;")
-      .replace("#include <clipping_planes_fragment>", "#include <clipping_planes_fragment>\nif (length(vMundo) < uRaio) discard;")
+      .replace("uniform float uRaio;", "uniform float uRaio;\nuniform vec2 uOrigem;\nuniform sampler2D uGrao;")
       .replace(
         "#include <map_fragment>",
         `#include <map_fragment>
-        vec2 uvGrao = (vMundo + uOrigem) / 2600.0;
+        vec2 uvGrao = (vMundo + uOrigem) / 260.0;
         float grao = texture2D(uGrao, uvGrao).r * 0.6 + texture2D(uGrao, uvGrao / 5.3).r * 0.4;
         diffuseColor.rgb *= 1.0 + (grao - 0.5) * 1.5;`,
       );
   };
   const malha = new THREE.Mesh(geo, material);
   const vias = montarVias();
-  malha.add(...vias);
+  const vizinhas = montarVizinhas();
+  malha.add(...vias, montarMatas(uRaio), ...vizinhas.values());
   grupo.add(malha);
 
-  const oceano = new THREE.Mesh(new THREE.CircleGeometry(9_000_000, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: "#2c5c78" }));
+  const oceano = new THREE.Mesh(new THREE.CircleGeometry(400_000, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: "#2c5c78" }));
   oceano.position.y = -0.5;
   grupo.add(oceano);
 
@@ -267,12 +356,12 @@ export function montarContinente() {
   const rotulo = (texto: string, mx: number, my: number, forte: boolean) => {
     const s = etiqueta(texto);
     const p = mundoDoMapa(mx, my);
-    s.position.set(p.x, altitudeContinente(mx, my) + 2500, p.z);
+    s.position.set(p.x, altitudeContinente(mx, my) + 300, p.z);
     s.userData.forte = forte;
     nomes.push(s);
     grupo.add(s);
   };
   for (const l of LUGARES) rotulo(l.nome, l.mx, l.my, true);
   for (const d of DECOR_LABELS) rotulo(d.nome.replace("\n", " "), d.x, d.y, false);
-  return { grupo, malha, nomes, uRaio, uOrigem, vias };
+  return { grupo, malha, nomes, uRaio, uOrigem, vias, vizinhas };
 }

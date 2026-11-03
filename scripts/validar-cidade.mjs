@@ -19,6 +19,7 @@ const pasta = path.join(raiz, "lib/mapa/cidades");
 const { Zona, LARGURA_PORTA, portaDe } = await import(pathToFileURL(path.join(raiz, "lib/mapa/zona.ts")).href);
 const { definirContinente, gerarRelevo, lerBin } = await import(pathToFileURL(path.join(raiz, "lib/mapa/relevo.ts")).href);
 const { CITIES, REGION_PLACES } = await import(pathToFileURL(path.join(raiz, "lib/mapa/geografia.ts")).href);
+const { POSICAO_3D } = await import(pathToFileURL(path.join(raiz, "lib/mapa/dados-relevo.ts")).href);
 definirContinente(lerBin(readFileSync(path.join(raiz, "public/mapa/continente.bin"))));
 const ids = process.argv[2] ? [process.argv[2]] : readdirSync(pasta).filter((f) => f !== "kit.ts").map((f) => f.replace(".ts", ""));
 const TIPOS = "casa comercio saloon hotel igreja publico banco estacao galpao fazenda moinho fabrica torre tenda ruina".split(" ");
@@ -46,7 +47,7 @@ for (const id of ids) {
     }
   }
   for (const a of c.areas) if (a.pts.length < 3) erros.push(`área ${a.tipo} com menos de 3 pontos`);
-  const l = [...CITIES, ...REGION_PLACES].find((v) => v.id === id);
+  const l = { ...[...CITIES, ...REGION_PLACES].find((v) => v.id === id), ...POSICAO_3D[id] };
   const arqDem = path.join(raiz, `public/mapa/relevo/${id}.bin`);
   const zona = new Zona(c, gerarRelevo(c, l.x, l.y, existsSync(arqDem) ? lerBin(readFileSync(arqDem)) : null));
   if (!zona.pontoLivre(c.chegada.x, c.chegada.z)) erros.push("chegada bloqueada");
