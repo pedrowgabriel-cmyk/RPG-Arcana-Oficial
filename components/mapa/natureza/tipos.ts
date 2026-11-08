@@ -19,6 +19,18 @@ export type NomeMaterial =
   | "osso"
   | "cacto"
   | "petala"
+  // Construções
+  | "reboco"
+  | "tijolo"
+  | "madeira"
+  | "madeira-escura"
+  | "telha"
+  | "telha-escura"
+  | "cantaria"
+  | "ferro"
+  | "vidro"
+  | "lona"
+  | "palha"
   | "agua";
 
 /** 0 = perto (modelo cheio), 1 = meio, 2 = longe (silhueta). */

@@ -3,7 +3,7 @@
 // malha própria, porque abrem o telhado.
 
 import * as THREE from "three";
-import { LARGURA_PORTA, faceDaPorta, type Zona } from "@/lib/mapa/zona";
+import type { Zona } from "@/lib/mapa/zona";
 import type { Area, Chao, Piso, Predio, TipoArea, TipoPredio, XZ } from "@/lib/mapa/tipos";
 import { lugarPorId } from "@/lib/mapa/lugares";
 import { comGrao, copiarContinente } from "./continente3d";
@@ -12,9 +12,9 @@ import { etiqueta } from "./etiqueta";
 import { preparar, tingir } from "./natureza/ferramentas";
 import { materialDe } from "./natureza/materiais";
 import { Natureza } from "./natureza/natureza3d";
+import { Construcoes } from "./construcoes/construcoes3d";
 
 const LADO_TEXTURA = 2048;
-const COR_FUNDACAO = "#6b6358";
 const COR_DA_AGUA = "#24464a";
 /** Fração do raio onde o lugar começa a se dissolver no continente. */
 export const INICIO_DA_BORDA = 0.82;
@@ -212,58 +212,6 @@ function pintarChao(zona: Zona) {
 
 export type Teto = { predio: Predio; telhado: THREE.Object3D; interior: THREE.Object3D };
 
-function montarEntravel(p: Predio, n: number, grupo: THREE.Group, tetos: Teto[], base: number, fundacao: number) {
-  const parede = new THREE.MeshLambertMaterial({ color: corDe(p, n) });
-  const interior = new THREE.Group();
-  const parte = (w: number, h: number, d: number, x: number, y: number, z: number, m: THREE.Material) => {
-    const malha = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-    malha.position.set(p.x + x, y + base, p.z + z);
-    malha.castShadow = true;
-    return malha;
-  };
-  grupo.add(parte(p.largura + 0.4, fundacao, p.fundo + 0.4, 0, -fundacao / 2, 0, new THREE.MeshLambertMaterial({ color: COR_FUNDACAO })));
-  const e = 0.5;
-  const { largura: L, fundo: F, altura: A } = p;
-  const face = faceDaPorta(p);
-  const cheia = (f: "n" | "s" | "l" | "o") => {
-    const [w, d, x, z] = f === "n" ? [L, e, 0, -F / 2] : f === "s" ? [L, e, 0, F / 2] : f === "l" ? [e, F, L / 2, 0] : [e, F, -L / 2, 0];
-    grupo.add(parte(w, A, d, x, A / 2, z, parede));
-  };
-  (["n", "s", "l", "o"] as const).filter((f) => f !== face).forEach(cheia);
-  const horizontal = face === "n" || face === "s";
-  const comprimento = horizontal ? L : F;
-  const lado = (comprimento - LARGURA_PORTA) / 2;
-  const fixo = face === "s" ? F / 2 : face === "n" ? -F / 2 : face === "l" ? L / 2 : -L / 2;
-  for (const sinal of [-1, 1]) {
-    const c = (sinal * (lado + LARGURA_PORTA)) / 2;
-    grupo.add(horizontal ? parte(lado, A, e, c, A / 2, fixo, parede) : parte(e, A, lado, fixo, A / 2, c, parede));
-  }
-
-  const madeira = new THREE.MeshLambertMaterial({ color: "#5a3a22" });
-  const piso = parte(L - 0.4, 0.1, F - 0.4, 0, 0.06, 0, new THREE.MeshLambertMaterial({ color: "#c9ae84" }));
-  piso.castShadow = false;
-  interior.add(piso, parte(L * 0.6, 1.1, 1, 0, 0.55, face === "n" ? F / 2 - 1.5 : -F / 2 + 1.5, madeira));
-  if (L > 11) for (const lx of [-0.28, 0.28]) interior.add(parte(2.2, 0.9, 2.2, L * lx, 0.45, 0, madeira));
-  grupo.add(interior);
-
-  let telhado: THREE.Object3D;
-  if (SEM_TELHADO.includes(p.tipo)) telhado = new THREE.Group();
-  else {
-    const m = new THREE.Mesh(prismaUnitario(), new THREE.MeshLambertMaterial({ color: COR_TELHADO[p.tipo] ?? "#6e3a2a", side: THREE.DoubleSide }));
-    m.scale.set(L * 1.06, 2.6, F * 1.06);
-    m.position.set(p.x, A + base, p.z);
-    m.castShadow = true;
-    telhado = m;
-  }
-  grupo.add(telhado);
-  tetos.push({ predio: p, telhado, interior });
-
-  const nome = etiqueta(p.nome, 1.5);
-  nome.position.set(p.x, A + 6 + base, p.z);
-  nome.userData.predio = true;
-  grupo.add(nome);
-  return nome;
-}
 
 /** Caixa e telhado em instância; `onde` diz a posição: local no lugar, global no continente. */
 export function montarPredios(lista: Predio[], grupo: THREE.Group, onde: (p: Predio) => { x: number; z: number; y: number; fundacao: number }) {
@@ -307,7 +255,6 @@ export function montarLugar(zona: Zona) {
   const raiz = new THREE.Group();
   // Prédios e árvores trocam de nível de detalhe juntos; o chão só some aos poucos.
   const grupo = new THREE.Group();
-  const tetos: Teto[] = [];
   const nomes: THREE.Sprite[] = [];
   const { cidade } = zona;
   const material = new THREE.MeshLambertMaterial({ map: pintarChao(zona), transparent: true });
@@ -326,12 +273,24 @@ export function montarLugar(zona: Zona) {
     if (f.tipo === "gruta") montarGruta(f.x, f.z, zona, grupo);
   }
 
-  const entraveis = cidade.predios.filter((p) => p.entravel);
-  entraveis.forEach((p, i) => nomes.push(montarEntravel(p, i, grupo, tetos, zona.relevo?.baseDe(p.id) ?? 0, zona.relevo?.fundacoes.get(p.id) ?? 0)));
-  montarPredios(cidade.predios.filter((p) => !p.entravel), grupo, (p) => ({ x: p.x, z: p.z, y: zona.relevo?.baseDe(p.id) ?? 0, fundacao: zona.relevo?.fundacoes.get(p.id) ?? 0 }));
+  // Prédios no estilo da cidade; enquanto o estilo carrega, nada some: as caixas leves ficam.
+  const construcoes = new Construcoes(zona, (predios) => {
+    const g = new THREE.Group();
+    montarPredios(predios, g, (p) => ({ x: p.x, z: p.z, y: zona.relevo?.baseDe(p.id) ?? 0, fundacao: zona.relevo?.fundacoes.get(p.id) ?? 0 }));
+    return g;
+  });
+  grupo.add(construcoes.grupo);
+  void construcoes.carregar();
+  for (const p of cidade.predios.filter((p) => p.entravel)) {
+    const nome = etiqueta(p.nome, 1.5);
+    nome.position.set(p.x, p.altura + 6 + (zona.relevo?.baseDe(p.id) ?? 0), p.z);
+    nome.userData.predio = true;
+    grupo.add(nome);
+    nomes.push(nome);
+  }
   // Árvores, pedras e capim: modelos da natureza, carregados logo depois do lugar.
   const natureza = new Natureza(zona);
   grupo.add(natureza.grupo);
   void natureza.carregar();
-  return { grupo: raiz, detalhes: grupo, chao, material, tetos, nomes, natureza, temAgua };
+  return { grupo: raiz, detalhes: grupo, chao, material, tetos: construcoes.tetos, nomes, natureza, temAgua, construcoes };
 }

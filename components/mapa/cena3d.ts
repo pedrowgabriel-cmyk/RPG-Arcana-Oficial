@@ -497,6 +497,7 @@ export class Cena3D {
     this.suavizar(dt);
     if (this.andarDireto(dt)) this.sujo = true;
     if (this.lugar?.detalhes.visible && this.lugar.natureza.atualizar(this.camera.position, this.alvo)) this.sujo = true;
+    if (this.lugar?.detalhes.visible && this.lugar.construcoes.atualizar(this.camera.position)) this.sujo = true;
     for (const b of this.bonecos.values()) if (this.passo(b, dt)) this.sujo = true;
     if (agora - this.ultimoCeu > QUADROS_DE_CEU_MS) {
       const passou = Math.min(0.2, (agora - (this.ultimoCeu || agora - QUADROS_DE_CEU_MS)) / 1000);
@@ -606,9 +607,12 @@ export class Cena3D {
     const perto = this.distancia < DISTANCIA_ABRE_TELHADO;
     const oculto = (id: string) => !this.juiz && this.bloqueios.vista.includes(id);
 
+    // Abre só um telhado: o do prédio onde o jogador está, ou o que a câmera mira de perto.
+    // Abrir todos de uma vez deixava torres e mirantes soltos no ar.
+    const mirado = perto ? zona.predioNoPonto(this.alvo.x, this.alvo.z) : null;
     for (const t of lugar.tetos as Teto[]) {
       const estou = dentroDe?.id === t.predio.id;
-      const aberto = (perto || estou) && !(oculto(t.predio.id) && !estou);
+      const aberto = (estou || mirado?.id === t.predio.id) && !(oculto(t.predio.id) && !estou);
       t.telhado.visible = !aberto;
       t.interior.visible = aberto;
     }

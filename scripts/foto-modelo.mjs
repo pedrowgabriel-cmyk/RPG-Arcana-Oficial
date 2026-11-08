@@ -1,5 +1,6 @@
 // Fotografa um modelo da natureza na bancada (app/natureza-demo).
-//   node scripts/foto-modelo.mjs <id> [--modo grade|cena|perto] [--neve 0.8] [--seca] [--queimada] [--saida arquivo.png]
+//   node scripts/foto-modelo.mjs <id> [--modo grade|cena|perto]
+//   node scripts/foto-modelo.mjs <estilo> --estilo [--lugar <id>] [--modo grade|rua|longe|perto|entravel] [--neve 0.8] [--seca] [--queimada] [--saida arquivo.png]
 // Precisa do servidor de desenvolvimento em http://localhost:${PORTA:-3460}.
 // Uma foto por vez no computador inteiro (trava em arquivo): vários agentes podem chamar.
 import { spawn } from "node:child_process";
@@ -12,7 +13,8 @@ const id = args[0];
 const op = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : null);
 const modo = op("modo") ?? "grade";
 const saida = path.resolve(op("saida") ?? `foto-${id}-${modo}.png`);
-const q = new URLSearchParams({ modelo: id, modo });
+// --estilo: o id é um estilo de construção (bancada de prédios); --lugar escolhe a cidade.
+const q = args.includes("--estilo") ? new URLSearchParams({ estilo: id, modo, lugar: op("lugar") ?? "tupaciguara" }) : new URLSearchParams({ modelo: id, modo });
 if (op("neve")) q.set("neve", op("neve"));
 if (args.includes("--seca")) q.set("seca", "1");
 if (args.includes("--queimada")) q.set("queimada", "1");
