@@ -20,7 +20,7 @@ registerHooks({
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = await import(pathToFileURL(path.join(raiz, "lib/mapa/geografia.ts")).href);
-const { CONT_LARGURA, CONT_ALTURA, CONT_PASSO, METROS_POR_UNIDADE_DO_MAPA: M, POSICAO_3D, RECORTE_LADO, RECORTES, REGIAO_REAL } = await import(pathToFileURL(path.join(raiz, "lib/mapa/dados-relevo.ts")).href);
+const { CONT_LARGURA, CONT_ALTURA, CONT_PASSO, METROS_POR_UNIDADE_DO_MAPA: M, POSICAO_3D, RECORTE_LADO, RECORTES, REGIAO_REAL, ALEM_PERTO, ALEM_LONGE, COSTA_NOROESTE, CABO_SUL, COSTA_NORDESTE, RIOS_DE_FORA, regiaoDeFora } = await import(pathToFileURL(path.join(raiz, "lib/mapa/dados-relevo.ts")).href);
 
 /* ── Ruído ── */
 function ruido2(x, y, seed) {
@@ -266,4 +266,101 @@ for (const [id, r] of Object.entries(RECORTES)) {
     }
   }
 }
-writeFileSync(path.join(raiz, "public/mapa/continente.bin"), Buffer.from(alts.buffer));
+
+/* ── Além do mapa ── mesma receita do mapa, com a costa continuada e as três paisagens de fora. */
+const COSTA_TODA = [...COSTA_NOROESTE, ...G.WEST_COAST.slice(1), ...CABO_SUL.slice(1), ...[...G.EAST_COAST].reverse().slice(1), ...COSTA_NORDESTE.slice(1)];
+const MAR_FORA = [...COSTA_TODA, [9000, COSTA_TODA.at(-1)[1]], [9000, 9000], [-9000, 9000], [-9000, COSTA_TODA[0][1]]];
+const [LARG, ALT] = [CONT_LARGURA * CONT_PASSO - CONT_PASSO, CONT_ALTURA * CONT_PASSO - CONT_PASSO];
+const lim = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/** Altura já gravada do mapa (a última linha e coluna ficam de fora: são borda). */
+function interno(x, y) {
+  const fx = lim(x, CONT_PASSO, LARG - CONT_PASSO) / CONT_PASSO;
+  const fy = lim(y, CONT_PASSO, ALT - CONT_PASSO) / CONT_PASSO;
+  const [i, j] = [Math.floor(fx), Math.floor(fy)];
+  const [u, v] = [fx - i, fy - j];
+  const k = j * CONT_LARGURA + i;
+  return alts[k] * (1 - u) * (1 - v) + alts[k + 1] * u * (1 - v) + alts[k + CONT_LARGURA] * (1 - u) * v + alts[k + CONT_LARGURA + 1] * u * v;
+}
+
+function altitudeFora(x, y) {
+  const costa = aLinha(x, y, COSTA_TODA);
+  if (noPoligono(x, y, MAR_FORA)) return -Math.min(180, 1 + costa * 6);
+  let h = 760 * suave(0, 75, costa) + 1 + Math.min(costa, 160) * 2.2;
+  h += (fbm(x / 95, y / 95, 11) - 0.5) * 520 * suave(0, 40, costa);
+  h += (fbm(x / 22, y / 22, 12) - 0.5) * 170 * suave(0, 20, costa);
+  for (const m of G.HILL_DEFS) {
+    const d = Math.hypot(x - m.cx, y - m.cy) / m.r;
+    if (d < 4) h += Math.exp(-d * d * 1.6) * 240 * (0.6 + crista(x / 14, y / 14, 31));
+  }
+  G.RIDGES.forEach((r, i) => {
+    const d = aoSegmento(x, y, [r.x1, r.y1], [r.x2, r.y2]);
+    if (d < 80) h += Math.exp(-(d * d) / 420) * (r.y1 < 115 ? 1.5 : 1) * (420 + 760 * crista(x / 17, y / 17, 40 + i) * crista(x / 6, y / 6, 50 + i));
+  });
+  const fora = Math.hypot(x - lim(x, 0, LARG), y - lim(y, 0, ALT));
+  const longe = suave(0, 110, fora);
+  const R = regiaoDeFora(x, y);
+  // Sertão e cerrado são planos de chapada: o ondulado do mapa acalma longe dele.
+  const mov = suave(0, 40, costa) * (1 - longe * (0.6 * R.sertao + 0.5 * R.cerrado));
+  h = 6 + h * 0.24;
+  h += (fbm(x / 62, y / 62, 71) - 0.5) * 460 * mov;
+  h += (crista(x / 24, y / 24, 72) - 0.55) * 240 * mov;
+  h += (fbm(x / 8, y / 8, 73) - 0.5) * 56 * suave(0, 40, costa);
+  // Chapadas do sertão: topo plano, escarpa curta e recortada.
+  const mesa = fbm(x / 150, y / 150, 81) + (fbm(x / 26, y / 26, 82) - 0.5) * 0.14;
+  const sertao = -50 + suave(0.52, 0.56, mesa) * 200 + suave(0.6, 0.63, mesa) * 90 + (fbm(x / 40, y / 40, 83) - 0.5) * 30;
+  // Chapadões do cerrado: largos, de borda mansa, com veredas no baixo.
+  const cmesa = fbm(x / 260, y / 260, 91) + (fbm(x / 40, y / 40, 92) - 0.5) * 0.1;
+  const cerrado = -30 + suave(0.45, 0.53, cmesa) * 150;
+  // Serras de mata: cristas compridas paralelas à costa (nordeste), altas perto do mar.
+  const [a, b] = [(x - y) * 0.7071, (x + y) * 0.7071];
+  const serra = Math.pow(crista(a / 170, b / 48, 101), 2) * 430 + crista(a / 42, b / 15, 102) * 130 - 110;
+  const mata = serra * suave(0, 70, costa);
+  h += longe * suave(0, 25, costa) * (R.sertao * sertao + R.cerrado * cerrado + R.mata * mata);
+  for (const r of RIOS_DE_FORA) {
+    const d = aLinha(x, y, r.pts);
+    if (d < 20) h -= (1 - suave(0.3, 9 * Math.sqrt(r.largura / 1.6), d)) * Math.min(260, h * 0.36);
+  }
+  return Math.max(1, Math.min(640, h));
+}
+
+/** Fora do mapa, corrigido para encostar na borda gravada sem degrau. */
+function alturaDeFora(x, y) {
+  const [cx, cy] = [lim(x, 0, LARG), lim(y, 0, ALT)];
+  const fora = Math.hypot(x - cx, y - cy);
+  if (fora === 0) return interno(x, y);
+  const v = altitudeFora(x, y);
+  const peso = 1 - suave(0, 45, fora);
+  return peso > 0 ? v + (interno(cx, cy) - altitudeFora(cx, cy)) * peso : v;
+}
+
+function grade(g, f) {
+  const a = new Int16Array(g.largura * g.altura);
+  for (let j = 0; j < g.altura; j++) for (let i = 0; i < g.largura; i++) a[j * g.largura + i] = Math.round(f(g.x0 + i * g.passo, g.y0 + j * g.passo));
+  return a;
+}
+const longe = grade(ALEM_LONGE, alturaDeFora);
+const naLonge = (x, y) => {
+  const g = ALEM_LONGE;
+  const fx = lim((x - g.x0) / g.passo, 0, g.largura - 1.001);
+  const fy = lim((y - g.y0) / g.passo, 0, g.altura - 1.001);
+  const [i, j] = [Math.floor(fx), Math.floor(fy)];
+  const [u, v] = [fx - i, fy - j];
+  const k = j * g.largura + i;
+  return longe[k] * (1 - u) * (1 - v) + longe[k + 1] * u * (1 - v) + longe[k + g.largura] * (1 - u) * v + longe[k + g.largura + 1] * u * v;
+};
+// Perto da beira da grade fina, ela vira a grossa: as duas malhas se encontram sem fresta.
+const P = ALEM_PERTO;
+const perto = grade(P, (x, y) => {
+  const beira = Math.min(x - P.x0, P.x0 + (P.largura - 1) * P.passo - x, y - P.y0, P.y0 + (P.altura - 1) * P.passo - y);
+  const w = suave(0, 40, beira);
+  if (w === 0) return naLonge(x, y);
+  const v = alturaDeFora(x, y);
+  return w === 1 ? v : naLonge(x, y) + (v - naLonge(x, y)) * w;
+});
+console.log(`além do mapa: perto ${P.largura}×${P.altura}, longe ${ALEM_LONGE.largura}×${ALEM_LONGE.altura}`);
+const tudo = new Int16Array(alts.length + perto.length + longe.length);
+tudo.set(alts);
+tudo.set(perto, alts.length);
+tudo.set(longe, alts.length + perto.length);
+writeFileSync(path.join(raiz, "public/mapa/continente.bin"), Buffer.from(tudo.buffer));

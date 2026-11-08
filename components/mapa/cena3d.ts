@@ -15,6 +15,7 @@ import { montarContinente } from "./continente3d";
 import { INICIO_DA_BORDA, montarLugar, type Teto } from "./cidade3d";
 import type { Clima } from "@/lib/mapa/clima";
 import { Nuvens, type CeuLocal } from "./nuvens3d";
+import { uTempo } from "./natureza/materiais";
 import { etiqueta } from "./etiqueta";
 
 const ZOOM_MIN = 22;
@@ -492,13 +493,17 @@ export class Cena3D {
     this.quadro = requestAnimationFrame(this.ciclo);
     const dt = Math.min(PASSO_MAXIMO_S, (agora - this.antes) / 1000);
     this.antes = agora;
+    uTempo.value = agora / 1000;
     this.suavizar(dt);
     if (this.andarDireto(dt)) this.sujo = true;
+    if (this.lugar?.detalhes.visible && this.lugar.natureza.atualizar(this.camera.position, this.alvo)) this.sujo = true;
     for (const b of this.bonecos.values()) if (this.passo(b, dt)) this.sujo = true;
     if (agora - this.ultimoCeu > QUADROS_DE_CEU_MS) {
       const passou = Math.min(0.2, (agora - (this.ultimoCeu || agora - QUADROS_DE_CEU_MS)) / 1000);
       this.ultimoCeu = agora;
       this.ceu = this.nuvens.atualizar(passou, this.distancia, this.alvo, this.origem);
+      // Água e céu se mexem sozinhos: redesenha no ritmo do céu.
+      if (this.lugar?.temAgua && this.lugar.detalhes.visible) this.sujo = true;
       if (this.nuvens.ativo || this.ceu.nuvens > 0.05) {
         this.aplicarClima();
         this.sujo = true;

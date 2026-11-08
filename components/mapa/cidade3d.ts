@@ -3,18 +3,21 @@
 // malha própria, porque abrem o telhado.
 
 import * as THREE from "three";
-import { LARGURA_PORTA, faceDaPorta, dentroDoPoligono, type Zona } from "@/lib/mapa/zona";
-import type { Area, Chao, Especie, Piso, Predio, TipoArea, TipoPredio, XZ } from "@/lib/mapa/tipos";
+import { LARGURA_PORTA, faceDaPorta, type Zona } from "@/lib/mapa/zona";
+import type { Area, Chao, Piso, Predio, TipoArea, TipoPredio, XZ } from "@/lib/mapa/tipos";
 import { lugarPorId } from "@/lib/mapa/lugares";
 import { comGrao, copiarContinente } from "./continente3d";
 import { METROS_POR_UNIDADE_DO_MAPA } from "@/lib/mapa/dados-relevo";
 import { etiqueta } from "./etiqueta";
+import { preparar, tingir } from "./natureza/ferramentas";
+import { materialDe } from "./natureza/materiais";
+import { Natureza } from "./natureza/natureza3d";
 
 const LADO_TEXTURA = 2048;
 const COR_FUNDACAO = "#6b6358";
+const COR_DA_AGUA = "#24464a";
 /** Fração do raio onde o lugar começa a se dissolver no continente. */
 export const INICIO_DA_BORDA = 0.82;
-const MAX_ARVORES = 4000;
 
 export const COR_CHAO: Record<Chao, string> = {
   campo: "#6f7743",
@@ -148,16 +151,20 @@ function malhaDoChao(zona: Zona) {
   return g;
 }
 
+/** Lagos e açudes com a água animada da natureza. Cor escura: clara ela vira espuma. */
 function montarAgua(zona: Zona, grupo: THREE.Group) {
-  const material = new THREE.MeshLambertMaterial({ color: "#2f6a86", transparent: true, opacity: 0.93 });
+  let quantas = 0;
   zona.cidade.areas.forEach((a, i) => {
     const nivel = zona.relevo?.niveis.get(i);
     if (a.tipo !== "agua" || nivel === undefined) return;
     const forma = new THREE.Shape(a.pts.map(([x, z]) => new THREE.Vector2(x, -z)));
-    const m = new THREE.Mesh(new THREE.ShapeGeometry(forma).rotateX(-Math.PI / 2), material);
+    const geometria = tingir(preparar(new THREE.ShapeGeometry(forma).rotateX(-Math.PI / 2)), COR_DA_AGUA, 0.06, i);
+    const m = new THREE.Mesh(geometria, materialDe("agua"));
     m.position.y = nivel;
     grupo.add(m);
+    quantas++;
   });
+  return quantas > 0;
 }
 
 function pintarChao(zona: Zona) {
@@ -282,64 +289,8 @@ export function montarPredios(lista: Predio[], grupo: THREE.Group, onde: (p: Pre
   grupo.add(caixas, telhados);
 }
 
-const FORMA: Record<Especie, { copa: THREE.BufferGeometry; cor: string; tronco: number; altura: number }> = {
-  copa: { copa: new THREE.IcosahedronGeometry(2.4, 0), cor: "#46603a", tronco: 2.2, altura: 3.4 },
-  pinheiro: { copa: new THREE.ConeGeometry(2.2, 6, 6), cor: "#2f4a3a", tronco: 1.6, altura: 4.2 },
-  cacto: { copa: new THREE.CylinderGeometry(0.5, 0.6, 3.6, 6), cor: "#5e7a45", tronco: 0.2, altura: 1.8 },
-  seca: { copa: new THREE.IcosahedronGeometry(1.5, 0), cor: "#5a4a38", tronco: 2.6, altura: 3 },
-  cogumelo: { copa: new THREE.SphereGeometry(2, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), cor: "#7a4f7e", tronco: 2.4, altura: 2.3 },
-};
 
-function prng(seed: number) {
-  let a = seed;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
-function montarArvores(zona: Zona, grupo: THREE.Group) {
-  const { cidade } = zona;
-  const r = prng(cidade.raio + cidade.predios.length);
-  const pontos: { x: number; z: number }[] = [];
-  const serve = (x: number, z: number) => zona.pontoLivre(x, z) && !zona.predioNoPonto(x, z) && !zona.naRua(x, z, 2);
-
-  for (const a of cidade.areas.filter((a) => a.tipo === "mata")) {
-    const xs = a.pts.map((p) => p[0]);
-    const zs = a.pts.map((p) => p[1]);
-    const [x0, x1, z0, z1] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
-    const quantas = Math.min(1200, Math.round(((x1 - x0) * (z1 - z0)) / 180));
-    for (let i = 0; i < quantas; i++) {
-      const [x, z] = [x0 + r() * (x1 - x0), z0 + r() * (z1 - z0)];
-      if (dentroDoPoligono(x, z, a.pts) && serve(x, z)) pontos.push({ x, z });
-    }
-  }
-  for (let i = 0; i < cidade.arvores * 2 && pontos.length < MAX_ARVORES; i++) {
-    const angulo = r() * Math.PI * 2;
-    const d = Math.sqrt(r()) * (cidade.raio - 2);
-    const [x, z] = [Math.cos(angulo) * d, Math.sin(angulo) * d];
-    if (serve(x, z)) pontos.push({ x, z });
-  }
-  const usados = pontos.slice(0, MAX_ARVORES);
-  if (!usados.length) return;
-
-  const f = FORMA[cidade.especie];
-  const copa = new THREE.InstancedMesh(f.copa.clone(), new THREE.MeshLambertMaterial({ color: f.cor, flatShading: true }), usados.length);
-  const tronco = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.32, 1, 5).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ color: "#4a3524" }), usados.length);
-  const m = new THREE.Matrix4();
-  usados.forEach((p, i) => {
-    const e = 0.8 + r() * 0.7;
-    const y = zona.altura(p.x, p.z);
-    m.makeScale(e, e, e).setPosition(p.x, y + f.altura * e, p.z);
-    copa.setMatrixAt(i, m);
-    m.makeScale(e, e * f.tronco, e).setPosition(p.x, y, p.z);
-    tronco.setMatrixAt(i, m);
-  });
-  copa.castShadow = true;
-  grupo.add(copa, tronco);
-}
 
 /** Boca de gruta na encosta. O interior vem depois, como lugar próprio. */
 function montarGruta(x: number, z: number, zona: Zona, grupo: THREE.Group) {
@@ -370,7 +321,7 @@ export function montarLugar(zona: Zona) {
   const chao = new THREE.Mesh(malhaDoChao(zona), material);
   chao.receiveShadow = true;
   raiz.add(chao, grupo);
-  montarAgua(zona, grupo);
+  const temAgua = montarAgua(zona, grupo);
   for (const f of cidade.feicoes ?? []) {
     if (f.tipo === "gruta") montarGruta(f.x, f.z, zona, grupo);
   }
@@ -378,6 +329,9 @@ export function montarLugar(zona: Zona) {
   const entraveis = cidade.predios.filter((p) => p.entravel);
   entraveis.forEach((p, i) => nomes.push(montarEntravel(p, i, grupo, tetos, zona.relevo?.baseDe(p.id) ?? 0, zona.relevo?.fundacoes.get(p.id) ?? 0)));
   montarPredios(cidade.predios.filter((p) => !p.entravel), grupo, (p) => ({ x: p.x, z: p.z, y: zona.relevo?.baseDe(p.id) ?? 0, fundacao: zona.relevo?.fundacoes.get(p.id) ?? 0 }));
-  montarArvores(zona, grupo);
-  return { grupo: raiz, detalhes: grupo, chao, material, tetos, nomes };
+  // Árvores, pedras e capim: modelos da natureza, carregados logo depois do lugar.
+  const natureza = new Natureza(zona);
+  grupo.add(natureza.grupo);
+  void natureza.carregar();
+  return { grupo: raiz, detalhes: grupo, chao, material, tetos, nomes, natureza, temAgua };
 }

@@ -14,7 +14,21 @@ import {
   DECOR_LABELS,
   type Pt,
 } from "@/lib/mapa/geografia";
-import { CONT_ALTURA, CONT_LARGURA, CONT_PASSO } from "@/lib/mapa/dados-relevo";
+import {
+  ALEM_LONGE,
+  ALEM_PERTO,
+  CABO_SUL,
+  CONT_ALTURA,
+  CONT_LARGURA,
+  COSTA_NORDESTE,
+  COSTA_NOROESTE,
+  INICIO_LONGE,
+  INICIO_PERTO,
+  RIOS_DE_FORA,
+  regiaoDeFora,
+  ruidoDeFora,
+  type GradeDeFora,
+} from "@/lib/mapa/dados-relevo";
 import { altitudeContinente, dadosDoContinente } from "@/lib/mapa/relevo";
 import { ALTURA_MAPA, LARGURA_MAPA, LUGARES, METROS_POR_UNIDADE_DO_MAPA, cidadesCarregadas, lugarPorId, mundoDoMapa } from "@/lib/mapa/lugares";
 import type { XZ } from "@/lib/mapa/tipos";
@@ -29,6 +43,62 @@ const COR_TERRA = "#6f7743";
 const FOLGA_DAS_VIAS = 24; // unidades do mapa: em volta do lugar a rua é a da cidade
 
 let amostra: CanvasRenderingContext2D | null = null;
+
+/**
+ * Texturas assadas: a pintura do continente e da terra de fora leva dezenas de segundos
+ * e sai sempre igual, então é feita uma vez (scripts/assar-texturas.mjs) e o mapa só carrega.
+ * Mudou cidade, relevo ou pintura? Rode o script de novo e suba VERSAO_TEXTURAS.
+ */
+export const VERSAO_TEXTURAS = 1;
+export const TEXTURAS_ASSADAS = ["continente", "alem-perto", "alem-longe"] as const;
+type NomeAssada = (typeof TEXTURAS_ASSADAS)[number];
+const assadas = new Map<NomeAssada, HTMLImageElement>();
+const pintadas = new Map<NomeAssada, HTMLCanvasElement>();
+const assando = () => typeof location !== "undefined" && new URLSearchParams(location.search).has("assar");
+export const telaGrande = () => window.matchMedia("(min-width: 1024px)").matches;
+
+export async function carregarTexturasAssadas() {
+  if (assando() || assadas.size) return;
+  const sufixo = telaGrande() ? "" : "-celular";
+  await Promise.all(
+    TEXTURAS_ASSADAS.map(
+      (nome) =>
+        new Promise<void>((pronto) => {
+          const img = new Image();
+          img.onload = () => {
+            assadas.set(nome, img);
+            pronto();
+          };
+          // Sem o arquivo, cai na pintura na hora: lenta, mas o mapa abre.
+          img.onerror = () => pronto();
+          img.src = `/mapa/texturas/${nome}${sufixo}.webp?v=${VERSAO_TEXTURAS}`;
+        }),
+    ),
+  );
+}
+
+/** Canvas da textura assada, no tamanho pedido; null se não houver. */
+function deAssada(nome: NomeAssada, largura: number, altura: number) {
+  const img = assadas.get(nome);
+  if (!img) return null;
+  const canvas = document.createElement("canvas");
+  [canvas.width, canvas.height] = [largura, altura];
+  canvas.getContext("2d")!.drawImage(img, 0, 0, largura, altura);
+  return canvas;
+}
+
+function texturaDe(canvas: HTMLCanvasElement) {
+  const textura = new THREE.CanvasTexture(canvas);
+  textura.generateMipmaps = true;
+  textura.colorSpace = THREE.SRGBColorSpace;
+  textura.anisotropy = 4;
+  return textura;
+}
+
+/** Para o script de assar: as texturas pintadas nesta abertura. */
+export function texturasPintadas() {
+  return pintadas;
+}
 
 /** Regiões de cor. Leitura das descrições do Doc 2 §5.3. */
 const BIOMAS: { x: number; y: number; rx: number; ry: number; cor: string }[] = [
@@ -47,6 +117,11 @@ function fechar(c: CanvasRenderingContext2D, pts: readonly Pt[]) {
 }
 
 function pintar() {
+  const pronta = deAssada("continente", LARGURA_MAPA * PX_POR_UNIDADE, ALTURA_MAPA * PX_POR_UNIDADE);
+  if (pronta) {
+    amostra = pronta.getContext("2d")!;
+    return texturaDe(pronta);
+  }
   const canvas = document.createElement("canvas");
   canvas.width = LARGURA_MAPA * PX_POR_UNIDADE;
   canvas.height = ALTURA_MAPA * PX_POR_UNIDADE;
@@ -98,17 +173,14 @@ function pintar() {
   salpicar(c);
   pintarCidades(c);
   amostra = c;
-  const textura = new THREE.CanvasTexture(canvas);
-  textura.generateMipmaps = true;
-  textura.colorSpace = THREE.SRGBColorSpace;
-  textura.anisotropy = 4;
-  return textura;
+  pintadas.set("continente", canvas);
+  return texturaDe(canvas);
 }
 
 /** Manchas de vegetação e solo, em duas escalas: o desenho sozinho fica chapado de perto. */
-function salpicar(c: CanvasRenderingContext2D) {
+function salpicar(c: CanvasRenderingContext2D, x0 = 0, y0 = 0, w = LARGURA_MAPA, h = ALTURA_MAPA, tetos = [Infinity, Infinity], semente = 91) {
   const r = (() => {
-    let a = 91;
+    let a = semente;
     return () => {
       a = (a + 0x6d2b79f5) | 0;
       let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -116,13 +188,17 @@ function salpicar(c: CanvasRenderingContext2D) {
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   })();
+  // Mesma densidade por área do mapa; se o teto cortar a quantidade, a mancha cresce para cobrir igual.
+  const area = (w * h) / (LARGURA_MAPA * ALTURA_MAPA);
   c.save();
   c.globalCompositeOperation = "soft-light";
-  for (const [quantas, tamanho, forca] of [[3800, 18, 0.1], [60000, 1.6, 0.15]] as const) {
+  for (const [base, tamanho, forca, teto] of [[3800, 18, 0.1, tetos[0]], [60000, 1.6, 0.15, tetos[1]]] as const) {
+    const quantas = Math.round(Math.min(base * area, teto));
+    const cresce = Math.sqrt((base * area) / Math.max(1, quantas));
     for (let i = 0; i < quantas; i++) {
       c.fillStyle = r() > 0.5 ? `rgba(22,44,20,${forca})` : `rgba(226,204,150,${forca})`;
       c.beginPath();
-      c.ellipse(r() * LARGURA_MAPA, r() * ALTURA_MAPA, tamanho * (0.5 + r()), tamanho * (0.3 + r() * 0.7), r() * 3, 0, Math.PI * 2);
+      c.ellipse(x0 + r() * w, y0 + r() * h, tamanho * cresce * (0.5 + r()), tamanho * cresce * (0.3 + r() * 0.7), r() * 3, 0, Math.PI * 2);
       c.fill();
     }
   }
@@ -265,125 +341,362 @@ export function copiarContinente(destino: CanvasRenderingContext2D, mx: number, 
   destino.drawImage(amostra!.canvas, (mx - raioEmUnidades) * px, (my - raioEmUnidades) * px, raioEmUnidades * 2 * px, raioEmUnidades * 2 * px, 0, 0, lado, lado);
 }
 
-/** Fora do mapa: o resto do país ao norte e a leste, mar ao sul e a oeste. Dá para ver, não para ir. */
-function montarAlemDoMapa(uRaio: { value: number }) {
-  const PASSO = 12;
-  const [x0, x1, y0, y1] = [-LARGURA_MAPA * 2, LARGURA_MAPA * 3, -ALTURA_MAPA * 2, ALTURA_MAPA * 3];
-  const [nx, ny] = [(x1 - x0) / PASSO, (y1 - y0) / PASSO];
-  const geo = new THREE.PlaneGeometry((x1 - x0) * METROS_POR_UNIDADE_DO_MAPA, (y1 - y0) * METROS_POR_UNIDADE_DO_MAPA, nx, ny).rotateX(-Math.PI / 2);
-  geo.translate(((x0 + x1) / 2 - LARGURA_MAPA / 2) * METROS_POR_UNIDADE_DO_MAPA, 0, ((y0 + y1) / 2 - ALTURA_MAPA / 2) * METROS_POR_UNIDADE_DO_MAPA);
-  const pos = geo.attributes.position;
-  const cores = new Float32Array(pos.count * 3);
-  const [rocha, neve, areia] = ["#7a7064", "#e6eaec", "#c8b07a"].map((c) => new THREE.Color(c));
-  const cor = new THREE.Color();
-  // A cor nasce da borda do mapa: lê o chão pintado do continente, reduzido.
-  const reduzido = document.createElement("canvas");
-  [reduzido.width, reduzido.height] = [LARGURA_MAPA / 2, ALTURA_MAPA / 2];
-  const rc = reduzido.getContext("2d", { willReadFrequently: true })!;
-  rc.drawImage(amostra!.canvas, 0, 0, reduzido.width, reduzido.height);
-  const pixels = rc.getImageData(0, 0, reduzido.width, reduzido.height).data;
-  // Versão bem borrada: longe da borda vale a média da região, não a última linha esticada.
-  const borrado = document.createElement("canvas");
-  [borrado.width, borrado.height] = [25, 18];
-  const bc = borrado.getContext("2d", { willReadFrequently: true })!;
-  bc.drawImage(reduzido, 0, 0, borrado.width, borrado.height);
-  const media = bc.getImageData(0, 0, borrado.width, borrado.height).data;
-  const ler = (dados: Uint8ClampedArray, w: number, h: number, u: number, v: number, alvo: THREE.Color) => {
-    const [x, y] = [Math.max(0, Math.min(w - 1.001, u * w - 0.5)), Math.max(0, Math.min(h - 1.001, v * h - 0.5))];
-    const [i, j] = [Math.floor(x), Math.floor(y)];
-    const [fx, fy] = [x - i, y - j];
-    const canal = (c: number) => {
-      const k = (a: number, b: number) => dados[((j + b) * w + i + a) * 4 + c];
-      return (k(0, 0) * (1 - fx) * (1 - fy) + k(1, 0) * fx * (1 - fy) + k(0, 1) * (1 - fx) * fy + k(1, 1) * fx * fy) / 255;
-    };
-    return alvo.setRGB(canal(0), canal(1), canal(2), THREE.SRGBColorSpace);
+/* ── Além do mapa ──
+ * O resto do país, que se vê de longe e não se visita: sertão ao norte, cerrado a noroeste,
+ * serras de mata a leste, mar a oeste e ao sul. Duas peças (perto, fina; longe, grossa), pintadas
+ * com a mesma receita do mapa: cor de região, matas, rios, relevo sombreado e manchas. O mapa
+ * entra pintado no meio da peça de perto e se desfaz nela, então a emenda não tem linha.
+ */
+const BANDA = BORDA_DESFEITA / METROS_POR_UNIDADE_DO_MAPA;
+const COR_MAR = "#2c5c78";
+const COR_MATA = "#3f5a35";
+const ARVORES_DE_FORA = 5000;
+
+function lerGrade(g: GradeDeFora, inicio: number, mx: number, my: number) {
+  const a = dadosDoContinente();
+  const fx = Math.max(0, Math.min(g.largura - 1.001, (mx - g.x0) / g.passo));
+  const fy = Math.max(0, Math.min(g.altura - 1.001, (my - g.y0) / g.passo));
+  const [i, j] = [Math.floor(fx), Math.floor(fy)];
+  const [u, v] = [fx - i, fy - j];
+  const k = inicio + j * g.largura + i;
+  return a[k] * (1 - u) * (1 - v) + a[k + 1] * u * (1 - v) + a[k + g.largura] * (1 - u) * v + a[k + g.largura + 1] * u * v;
+}
+
+const dentroDaGrade = (g: GradeDeFora, mx: number, my: number) =>
+  mx >= g.x0 && my >= g.y0 && mx <= g.x0 + (g.largura - 1) * g.passo && my <= g.y0 + (g.altura - 1) * g.passo;
+
+/** Altitude em qualquer ponto, dentro ou fora do mapa. */
+function alturaEmToda(mx: number, my: number) {
+  if (mx >= 0 && my >= 0 && mx <= LARGURA_MAPA && my <= ALTURA_MAPA) return altitudeContinente(mx, my);
+  return dentroDaGrade(ALEM_PERTO, mx, my) ? lerGrade(ALEM_PERTO, INICIO_PERTO, mx, my) : lerGrade(ALEM_LONGE, INICIO_LONGE, mx, my);
+}
+
+const foraDoMapa = (mx: number, my: number) =>
+  Math.hypot(mx - Math.max(0, Math.min(LARGURA_MAPA, mx)), my - Math.max(0, Math.min(ALTURA_MAPA, my)));
+
+function sorteio(semente: number) {
+  let a = semente;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  // Longe da borda a paisagem é própria: a média do mapa variando em todas as direções,
-  // em vez da cor da borda esticada (que vira faixa).
-  const mediaDoMapa = new THREE.Color(0, 0, 0);
-  for (let k = 0; k < media.length; k += 4) mediaDoMapa.r += media[k] / 255 / (media.length / 4);
-  for (let k = 1; k < media.length; k += 4) mediaDoMapa.g += media[k] / 255 / (media.length / 4);
-  for (let k = 2; k < media.length; k += 4) mediaDoMapa.b += media[k] / 255 / (media.length / 4);
-  mediaDoMapa.convertSRGBToLinear();
-  const [mato, cerrado] = ["#4f6234", "#8a7d4c"].map((c) => new THREE.Color(c));
-  const longe = new THREE.Color();
-  const corDaBorda = (cx: number, cy: number, solto: number, mx: number, my: number) => {
-    ler(pixels, reduzido.width, reduzido.height, cx / LARGURA_MAPA, cy / ALTURA_MAPA, cor);
-    longe.copy(mediaDoMapa).lerp(mato, ruidoFora(mx / 45, my / 45, 21) * 0.55).lerp(cerrado, ruidoFora(mx / 18, my / 18, 23) * 0.35);
-    return cor.lerp(longe, THREE.MathUtils.smoothstep(solto, 0, 0.8));
-  };
-  const alturas = new Float32Array(pos.count);
-  for (let i = 0; i < pos.count; i++) {
-    const mx = pos.getX(i) / METROS_POR_UNIDADE_DO_MAPA + LARGURA_MAPA / 2;
-    const my = pos.getZ(i) / METROS_POR_UNIDADE_DO_MAPA + ALTURA_MAPA / 2;
-    const [cx, cy] = [Math.max(0, Math.min(LARGURA_MAPA, mx)), Math.max(0, Math.min(ALTURA_MAPA, my))];
-    const borda = Math.hypot(mx - cx, my - cy);
-    // Costa de fora continua a do mapa: sobe para noroeste no oeste e para nordeste no leste.
-    const ruido = (ruidoFora(mx / 40, my / 40) - 0.5) * 60;
-    let costa = Infinity;
-    if (mx < 0) costa = 95 + mx * 0.55 + ruido - my;
-    else if (mx > LARGURA_MAPA) costa = 320 + (mx - LARGURA_MAPA) * 0.25 + ruido - my;
-    else if (my > ALTURA_MAPA) costa = -1;
-    // Fora do mapa a borda é lida com média ao longo dela, para não esticar o relevo em sulcos.
-    const espalha = Math.min(borda * 0.9, 60);
-    const ao = (dx: number, dy: number) => altitudeContinente(Math.max(0, Math.min(LARGURA_MAPA, cx + dx)), Math.max(0, Math.min(ALTURA_MAPA, cy + dy)));
-    const dentro = borda === 0 ? altitudeContinente(cx, cy) : (ao(0, 0) + ao(espalha, 0) + ao(-espalha, 0) + ao(0, espalha) + ao(0, -espalha)) / 5;
-    // O relevo de fora nasce do da borda e só ganha força longe dela.
-    const solto = THREE.MathUtils.smoothstep(borda, 0, 45);
-    let h: number;
-    if (costa < 0) h = -40;
-    else {
-      const serra = Math.pow(1 - Math.abs(2 * ruidoFora(mx / 70, my / 70, 9) - 1), 2);
-      const proprio = 60 + ruidoFora(mx / 110, my / 110, 3) * 240 + serra * 300;
-      h = (Math.max(dentro, 2) + (proprio - Math.max(dentro, 2)) * solto) * THREE.MathUtils.smoothstep(costa, 0, 40);
+}
+
+/** Pesos de região numa grade grossa: a conta da costa é cara para cada pixel. */
+function campoDeRegiao(x0: number, y0: number, w: number, h: number, passo: number) {
+  const [nx, ny] = [Math.ceil(w / passo) + 1, Math.ceil(h / passo) + 1];
+  const dados = new Float32Array(nx * ny * 2);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const r = regiaoDeFora(x0 + i * passo, y0 + j * passo);
+      dados[(j * nx + i) * 2] = r.mata;
+      dados[(j * nx + i) * 2 + 1] = r.cerrado;
     }
-    // Por baixo do mapa fica rente a ele: é o que aparece onde a borda do mapa se desfaz.
-    if (borda === 0) h = dentro - 0.8;
-    pos.setY(i, h);
-    alturas[i] = h;
-    corDaBorda(cx, cy, solto, mx, my);
-    // Varia devagar em volta da cor da borda, sem virar outra paisagem.
-    const variacao = 0.88 + ruidoFora(mx / 30, my / 30, 5) * 0.24;
-    cor.multiplyScalar(1 - solto + solto * variacao);
-    if (h < 0) cor.copy(areia).multiplyScalar(0.6);
-    else cor.lerp(rocha, THREE.MathUtils.smoothstep(h, 430, 620) * solto * 0.6).lerp(neve, THREE.MathUtils.smoothstep(h, 560, 660) * solto);
-    cores.set([cor.r, cor.g, cor.b], i * 3);
   }
-  // Mesmo sombreamento que o continente tem pintado na textura.
-  const linha = nx + 1;
-  for (let i = 0; i < pos.count; i++) {
-    const declive = ((alturas[i + 1] ?? alturas[i]) - alturas[i] + ((alturas[i + linha] ?? alturas[i]) - alturas[i])) / (PASSO / CONT_PASSO);
-    const luz = THREE.MathUtils.clamp(1 - declive * 0.011, 0.66, 1.18);
-    for (let c = 0; c < 3; c++) cores[i * 3 + c] *= luz;
+  return (mx: number, my: number) => {
+    const fx = Math.max(0, Math.min(nx - 1.001, (mx - x0) / passo));
+    const fy = Math.max(0, Math.min(ny - 1.001, (my - y0) / passo));
+    const [i, j] = [Math.floor(fx), Math.floor(fy)];
+    const [u, v] = [fx - i, fy - j];
+    const k = (c: number) => {
+      const q = (a: number, b: number) => dados[((j + b) * nx + i + a) * 2 + c];
+      return q(0, 0) * (1 - u) * (1 - v) + q(1, 0) * u * (1 - v) + q(0, 1) * (1 - u) * v + q(1, 1) * u * v;
+    };
+    const [mata, cerrado] = [k(0), k(1)];
+    return { mata, cerrado, sertao: Math.max(0, 1 - mata - cerrado) };
+  };
+}
+
+/** Manchas de mata de fora, em unidades do mapa: cerradas nas serras do leste, ralas no sertão. */
+type ManchaDeMata = { x: number; y: number; rx: number; ry: number; giro: number };
+let matasDeFora: ManchaDeMata[] | null = null;
+function listarMatasDeFora() {
+  if (matasDeFora) return matasDeFora;
+  const r = sorteio(313);
+  const g = ALEM_LONGE;
+  const [w, h] = [(g.largura - 1) * g.passo, (g.altura - 1) * g.passo];
+  const lista: ManchaDeMata[] = [];
+  const pertoDeRio = (x: number, y: number) =>
+    RIOS_DE_FORA.some((rio) => rio.pts.some(([a, b], i) => i % 3 === 0 && Math.hypot(a - x, b - y) < 22));
+  for (let i = 0; i < 26000; i++) {
+    const [x, y] = [g.x0 + r() * w, g.y0 + r() * h];
+    const tam = r();
+    const giro = r() * Math.PI;
+    const sorte = r();
+    if (foraDoMapa(x, y) < 6 || alturaEmToda(x, y) < 4) continue;
+    const reg = regiaoDeFora(x, y);
+    // Perto do mapa a densidade é a dele; longe vale a da região.
+    const longe = THREE.MathUtils.smoothstep(foraDoMapa(x, y), 0, 120);
+    const chance = (1 - longe) * 0.12 + longe * (reg.mata * 0.55 + reg.cerrado * 0.06 + reg.sertao * 0.015) + (pertoDeRio(x, y) ? 0.5 : 0);
+    if (sorte > chance) continue;
+    const [rx, ry] = [6 + tam * 26 * (0.6 + reg.mata), 4 + tam * 15 * (0.6 + reg.mata)];
+    lista.push({ x, y, rx, ry, giro });
   }
-  geo.setAttribute("color", new THREE.BufferAttribute(cores, 3));
+  return (matasDeFora = lista);
+}
+
+const MAR_DE_FORA = (() => {
+  const costa = [...COSTA_NOROESTE, ...WEST_COAST.slice(1), ...CABO_SUL.slice(1), ...[...EAST_COAST].reverse().slice(1), ...COSTA_NORDESTE.slice(1)];
+  return [...costa, [9000, costa.at(-1)![1]], [9000, 9000], [-9000, 9000], [-9000, costa[0][1]]] as Pt[];
+})();
+
+/** Canvas pequeno a partir de uma função por pixel, desenhado esticado e liso. */
+function porPixel(nx: number, ny: number, f: (i: number, j: number, px: Uint8ClampedArray, p: number) => void) {
+  const t = document.createElement("canvas");
+  [t.width, t.height] = [nx, ny];
+  const tc = t.getContext("2d")!;
+  const img = tc.createImageData(nx, ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) f(i, j, img.data, (j * nx + i) * 4);
+  tc.putImageData(img, 0, 0);
+  return t;
+}
+
+/**
+ * Pinta uma peça de fora. Cobre a grade inteira; `miolo` é o que entra pintado por cima
+ * (o mapa na peça de perto, a peça de perto na de longe), com a borda desfeita por `mascara`.
+ */
+function pintarFora(
+  g: GradeDeFora,
+  inicio: number,
+  pxPorUnidade: number,
+  passoDeCor: number,
+  tetos: [number, number],
+  miolo: { canvas: HTMLCanvasElement; x0: number; y0: number; w: number; h: number; mascara: (mx: number, my: number) => number },
+) {
+  const [x0, y0] = [g.x0, g.y0];
+  const [w, h] = [(g.largura - 1) * g.passo, (g.altura - 1) * g.passo];
+  const canvas = document.createElement("canvas");
+  [canvas.width, canvas.height] = [Math.round(w * pxPorUnidade), Math.round(h * pxPorUnidade)];
+  const c = canvas.getContext("2d")!;
+  c.setTransform(pxPorUnidade, 0, 0, pxPorUnidade, -x0 * pxPorUnidade, -y0 * pxPorUnidade);
+  c.imageSmoothingQuality = "high";
+  const regiao = campoDeRegiao(x0, y0, w, h, Math.max(16, passoDeCor * 4));
+  const altura = (mx: number, my: number) => lerGrade(g, inicio, mx, my);
+
+  // Tom do mapa na borda: média bem borrada, para a terra de fora nascer da cor dele.
+  const borrado = document.createElement("canvas");
+  [borrado.width, borrado.height] = [40, 30];
+  const bc = borrado.getContext("2d", { willReadFrequently: true })!;
+  bc.drawImage(amostra!.canvas, 0, 0, 40, 30);
+  const media = bc.getImageData(0, 0, 40, 30).data;
+  const terra = new THREE.Color(COR_TERRA);
+  const tomDoMapa = (mx: number, my: number, alvo: number[]) => {
+    const i = Math.max(0, Math.min(39, Math.floor((mx / LARGURA_MAPA) * 40)));
+    const j = Math.max(0, Math.min(29, Math.floor((my / ALTURA_MAPA) * 30)));
+    const p = (j * 40 + i) * 4;
+    const [r, gg, b] = [media[p], media[p + 1], media[p + 2]];
+    // Onde a borda é mar, a terra de fora parte do chão comum do mapa.
+    if (b > gg) [alvo[0], alvo[1], alvo[2]] = [terra.r * 255, terra.g * 255, terra.b * 255];
+    else [alvo[0], alvo[1], alvo[2]] = [r, gg, b];
+  };
+  const cores = {
+    seco: [163, 146, 96], caatinga: [125, 120, 80], chapada: [178, 158, 104], escarpa: [150, 112, 76],
+    cerrado: [140, 138, 79], campo: [162, 152, 90], vereda: [86, 106, 58],
+    mata: [60, 86, 50], mata2: [76, 98, 57], clareira: [109, 118, 70], rocha: [112, 106, 90],
+  };
+  const mistura = (a: number[], b: number[], t: number) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  const doMapa = [0, 0, 0];
+
+  // 1. Cor da região, ponto a ponto, numa grade grossa esticada.
+  const [nx, ny] = [Math.ceil(w / passoDeCor) + 1, Math.ceil(h / passoDeCor) + 1];
+  const cor = porPixel(nx, ny, (i, j, px, p) => {
+    const [mx, my] = [x0 + i * passoDeCor, y0 + j * passoDeCor];
+    const hh = altura(mx, my);
+    const dec = Math.abs(altura(mx + 2, my) - hh) + Math.abs(altura(mx, my + 2) - hh);
+    const R = regiao(mx, my);
+    const [n1, n2, n3] = [ruidoDeFora(mx / 34, my / 34, 401), ruidoDeFora(mx / 110, my / 110, 402), ruidoDeFora(mx / 14, my / 14, 403)];
+    const escarpa = THREE.MathUtils.smoothstep(dec, 14, 40);
+    let sertao = mistura(cores.seco, cores.caatinga, THREE.MathUtils.smoothstep(n1 + (n3 - 0.5) * 0.4, 0.42, 0.62));
+    sertao = mistura(sertao, cores.chapada, THREE.MathUtils.smoothstep(hh, 210, 280) * (1 - escarpa) * 0.7);
+    sertao = mistura(sertao, cores.escarpa, escarpa * 0.8);
+    let cerrado = mistura(cores.cerrado, cores.campo, THREE.MathUtils.smoothstep(n2 + (n3 - 0.5) * 0.3, 0.45, 0.65));
+    cerrado = mistura(cerrado, cores.vereda, (1 - THREE.MathUtils.smoothstep(hh, 60, 160)) * 0.6);
+    let mata = mistura(cores.mata, cores.mata2, n1);
+    mata = mistura(mata, cores.clareira, THREE.MathUtils.smoothstep(n2 + (n3 - 0.5) * 0.3, 0.6, 0.72) * 0.7);
+    mata = mistura(mata, cores.rocha, escarpa * THREE.MathUtils.smoothstep(hh, 380, 560));
+    const fora = mistura(mistura(sertao, cerrado, R.cerrado / Math.max(0.001, R.cerrado + R.sertao)), mata, R.mata);
+    // Do tom do mapa para o da região, em manchas.
+    tomDoMapa(mx, my, doMapa);
+    const t = THREE.MathUtils.smoothstep(foraDoMapa(mx, my) + (n2 - 0.5) * 120 + (n3 - 0.5) * 30, 0, 150);
+    const final = mistura(doMapa, fora, t);
+    [px[p], px[p + 1], px[p + 2], px[p + 3]] = [final[0], final[1], final[2], 255];
+  });
+  c.drawImage(cor, x0 - passoDeCor / 2, y0 - passoDeCor / 2, nx * passoDeCor, ny * passoDeCor);
+
+  // 2. Matas, como as manchas do mapa.
+  c.filter = `blur(${Math.max(0.6, 0.75 * pxPorUnidade).toFixed(1)}px)`;
+  c.fillStyle = COR_MATA;
+  c.beginPath();
+  for (const f of listarMatasDeFora()) {
+    if (f.x + f.rx < x0 || f.y + f.ry < y0 || f.x - f.rx > x0 + w || f.y - f.ry > y0 + h) continue;
+    c.moveTo(f.x + f.rx * Math.cos(f.giro), f.y + f.rx * Math.sin(f.giro));
+    c.ellipse(f.x, f.y, f.rx, f.ry, f.giro, 0, Math.PI * 2);
+  }
+  c.globalAlpha = 0.85;
+  c.fill();
+  c.globalAlpha = 1;
+  c.filter = "none";
+
+  // 3. Mar e rios.
+  c.fillStyle = COR_MAR;
+  fechar(c, MAR_DE_FORA);
+  c.fill();
+  c.strokeStyle = COR_MAR;
+  c.lineCap = "round";
+  c.lineJoin = "round";
+  for (const r of RIOS_DE_FORA) {
+    c.lineWidth = Math.max(r.largura, 1.2 / pxPorUnidade);
+    fechar(c, r.pts);
+    c.stroke();
+  }
+
+  // 4. Relevo sombreado: a mesma conta de pintarRelevo, na grade de fora.
+  const k = CONT_PASSO_FORA / g.passo;
+  const sombra = porPixel(g.largura, g.altura, (i, j, px, p) => {
+    const a = dadosDoContinente();
+    const q = inicio + j * g.largura + i;
+    const hh = a[q];
+    const dec = ((i + 1 < g.largura ? a[q + 1] : hh) - hh + ((j + 1 < g.altura ? a[q + g.largura] : hh) - hh)) * k;
+    const luz = Math.max(58, Math.min(198, 128 - dec * 1.8));
+    // Neve só onde a serra do mapa passa da borda; fora dele não neva.
+    const neve = THREE.MathUtils.smoothstep(hh, 660, 860) * (1 - THREE.MathUtils.smoothstep(foraDoMapa(g.x0 + i * g.passo, g.y0 + j * g.passo), 20, 140));
+    px[p] = px[p + 1] = px[p + 2] = luz + (255 - luz) * neve;
+    px[p + 3] = hh > 0 ? 255 : 0;
+  });
+  c.save();
+  c.globalCompositeOperation = "overlay";
+  c.drawImage(sombra, x0 - g.passo / 2, y0 - g.passo / 2, g.largura * g.passo, g.altura * g.passo);
+  c.restore();
+
+  // 5. Manchas de solo, na densidade do mapa.
+  salpicar(c, x0, y0, w, h, tetos, 97);
+
+  // 6. O miolo por cima, com a borda desfeita em manchas.
+  const passoMascara = Math.max(1, 1 / pxPorUnidade) * 2;
+  const [mx_, my_] = [Math.ceil(miolo.w / passoMascara) + 1, Math.ceil(miolo.h / passoMascara) + 1];
+  const mascara = porPixel(mx_, my_, (i, j, px, p) => {
+    px[p] = px[p + 1] = px[p + 2] = 255;
+    px[p + 3] = 255 * miolo.mascara(miolo.x0 + i * passoMascara, miolo.y0 + j * passoMascara);
+  });
+  const recorte = document.createElement("canvas");
+  [recorte.width, recorte.height] = [Math.round(miolo.w * pxPorUnidade), Math.round(miolo.h * pxPorUnidade)];
+  const rc = recorte.getContext("2d")!;
+  rc.imageSmoothingQuality = "high";
+  rc.drawImage(miolo.canvas, 0, 0, recorte.width, recorte.height);
+  rc.globalCompositeOperation = "destination-in";
+  rc.drawImage(mascara, -passoMascara / 2 * pxPorUnidade, -passoMascara / 2 * pxPorUnidade, mx_ * passoMascara * pxPorUnidade, my_ * passoMascara * pxPorUnidade);
+  c.drawImage(recorte, miolo.x0, miolo.y0, miolo.w, miolo.h);
+
+  const textura = new THREE.CanvasTexture(canvas);
+  textura.generateMipmaps = true;
+  textura.colorSpace = THREE.SRGBColorSpace;
+  textura.anisotropy = 4;
+  return { textura, canvas };
+}
+const CONT_PASSO_FORA = 2; // o sombreado do mapa mede o declive a cada 2 unidades
+
+/** Malha de uma grade de fora, sem as células que `pular` diz que outra peça cobre. */
+function malhaDeFora(g: GradeDeFora, inicio: number, mapa: THREE.Texture, uRaio: { value: number }, pular: (mx: number, my: number) => boolean, baixar: (mx: number, my: number) => number, recuo: number) {
+  const [w, h] = [(g.largura - 1) * g.passo, (g.altura - 1) * g.passo];
+  const geo = new THREE.PlaneGeometry(w * METROS_POR_UNIDADE_DO_MAPA, h * METROS_POR_UNIDADE_DO_MAPA, g.largura - 1, g.altura - 1).rotateX(-Math.PI / 2);
+  const centro = mundoDoMapa(g.x0 + w / 2, g.y0 + h / 2);
+  geo.translate(centro.x, 0, centro.z);
+  const a = dadosDoContinente();
+  const pos = geo.attributes.position;
+  for (let j = 0; j < g.altura; j++) {
+    for (let i = 0; i < g.largura; i++) {
+      const [mx, my] = [g.x0 + i * g.passo, g.y0 + j * g.passo];
+      pos.setY(j * g.largura + i, a[inicio + j * g.largura + i] - baixar(mx, my));
+    }
+  }
+  const indices: number[] = [];
+  for (let j = 0; j < g.altura - 1; j++) {
+    for (let i = 0; i < g.largura - 1; i++) {
+      if (pular(g.x0 + (i + 0.5) * g.passo, g.y0 + (j + 0.5) * g.passo)) continue;
+      const [p, q] = [j * g.largura + i, (j + 1) * g.largura + i];
+      indices.push(p, q, p + 1, q, q + 1, p + 1);
+    }
+  }
+  geo.setIndex(indices);
   geo.computeVertexNormals();
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const material = new THREE.MeshLambertMaterial({ map: mapa, polygonOffset: true, polygonOffsetFactor: recuo, polygonOffsetUnits: recuo });
   material.onBeforeCompile = (s) => {
     abrirBuraco(s, uRaio, false);
     comGrao(s);
   };
-  return new THREE.Mesh(geo, material);
+  const malha = new THREE.Mesh(geo, material);
+  malha.renderOrder = 1;
+  return malha;
 }
 
-function ruidoFora(x: number, y: number, seed = 0) {
-  const h = (i: number, j: number) => {
-    let n = Math.imul(i, 374761393) + Math.imul(j, 668265263) + seed * 1013;
-    n = Math.imul(n ^ (n >>> 13), 1274126177);
-    return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
-  };
-  let [s, a, t] = [0, 0.5, 0];
-  for (let o = 0; o < 4; o++) {
-    const [i, j] = [Math.floor(x), Math.floor(y)];
-    const [fx, fy] = [x - i, y - j];
-    const [u, v] = [fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)];
-    s += a * (h(i, j) * (1 - u) * (1 - v) + h(i + 1, j) * u * (1 - v) + h(i, j + 1) * (1 - u) * v + h(i + 1, j + 1) * u * v);
-    t += a;
-    x *= 2.03;
-    y *= 2.03;
-    a *= 0.5;
+/** Árvores nas matas de fora perto do mapa: de longe, a serra do leste tem copa. */
+function montarMatasDeFora(uRaio: { value: number }) {
+  const r = sorteio(919);
+  const material = new THREE.MeshLambertMaterial({ color: "#3b5533", flatShading: true });
+  material.onBeforeCompile = (s) => abrirBuraco(s, uRaio, true);
+  const copas = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), material, ARVORES_DE_FORA);
+  const matas = listarMatasDeFora().filter((f) => dentroDaGrade(ALEM_PERTO, f.x, f.y) && foraDoMapa(f.x, f.y) > 4);
+  const m = new THREE.Matrix4();
+  let n = 0;
+  for (let i = 0; i < ARVORES_DE_FORA * 3 && n < ARVORES_DE_FORA && matas.length; i++) {
+    const f = matas[Math.floor(r() * matas.length)];
+    const [ang, d] = [r() * Math.PI * 2, Math.sqrt(r())];
+    const [mx, my] = [f.x + Math.cos(ang) * d * f.rx * 0.8, f.y + Math.sin(ang) * d * f.ry * 0.8];
+    const h = alturaEmToda(mx, my);
+    if (h < 3 || foraDoMapa(mx, my) < 2) continue;
+    const p = mundoDoMapa(mx, my);
+    const e = 18 + r() * 24;
+    m.makeScale(e, e * 1.4, e).setPosition(p.x, h + e, p.z);
+    copas.setMatrixAt(n++, m);
   }
-  return s / t;
+  copas.count = n;
+  return copas;
+}
+
+/** Fora do mapa: dá para ver, não para ir. */
+function montarAlemDoMapa(uRaio: { value: number }) {
+  const grupo = new THREE.Group();
+  const P = ALEM_PERTO;
+  const L = ALEM_LONGE;
+  const [wP, hP] = [(P.largura - 1) * P.passo, (P.altura - 1) * P.passo];
+  // Dentro do mapa, a peça de perto só aparece na faixa onde a borda se desfaz.
+  const ate = (mx: number, my: number) => Math.min(mx, my, LARGURA_MAPA - mx, ALTURA_MAPA - my);
+  // Celular: metade da resolução e um quarto das manchas, senão a memória de vídeo estoura.
+  const grande = telaGrande();
+  const pxPerto = (grande ? 4096 : 2048) / wP;
+  const pxLonge = (grande ? 2048 : 1024) / ((L.largura - 1) * L.passo);
+  const assadaPerto = deAssada("alem-perto", Math.round(wP * pxPerto), Math.round(hP * pxPerto));
+  const assadaLonge = deAssada("alem-longe", Math.round((L.largura - 1) * L.passo * pxLonge), Math.round((L.altura - 1) * L.passo * pxLonge));
+  const perto = assadaPerto ? { canvas: assadaPerto, textura: texturaDe(assadaPerto) } : pintarFora(P, INICIO_PERTO, pxPerto, 4, grande ? [16_000, 150_000] : [4000, 37_500], {
+    canvas: amostra!.canvas,
+    x0: 0,
+    y0: 0,
+    w: LARGURA_MAPA,
+    h: ALTURA_MAPA,
+    mascara: (mx, my) => {
+      const n = ruidoDeFora(mx / 26, my / 26, 501) * 0.65 + ruidoDeFora(mx / 9, my / 9, 502) * 0.35;
+      return THREE.MathUtils.smoothstep(ate(mx, my) / BANDA + (n - 0.5) * 1.1, 0.12, 0.62);
+    },
+  });
+  pintadas.set("alem-perto", perto.canvas);
+  const longe = assadaLonge ? { canvas: assadaLonge, textura: texturaDe(assadaLonge) } : pintarFora(L, INICIO_LONGE, pxLonge, 12, grande ? [12_000, 0] : [3000, 0], {
+    canvas: perto.canvas,
+    x0: P.x0,
+    y0: P.y0,
+    w: wP,
+    h: hP,
+    mascara: (mx, my) => THREE.MathUtils.smoothstep(Math.min(mx - P.x0, my - P.y0, P.x0 + wP - mx, P.y0 + hP - my), 0, 60),
+  });
+  pintadas.set("alem-longe", longe.canvas);
+  const dentroDoMapa = (mx: number, my: number) => ate(mx, my) > BANDA + 12;
+  grupo.add(
+    malhaDeFora(P, INICIO_PERTO, perto.textura, uRaio, dentroDoMapa, (mx, my) => (ate(mx, my) >= 0 ? 3 : 0), 1),
+    malhaDeFora(L, INICIO_LONGE, longe.textura, uRaio, (mx, my) => dentroDaGrade(P, mx - L.passo, my - L.passo) && dentroDaGrade(P, mx + L.passo, my + L.passo), () => 0, 3),
+    montarMatasDeFora(uRaio),
+  );
+  return grupo;
 }
 
 /** Grão que repete pelo mundo: mantém o chão nítido entre a cidade e o continente. */
@@ -474,6 +787,7 @@ function pintarRelevo(c: CanvasRenderingContext2D) {
 }
 
 export function montarContinente() {
+  if (assando()) (window as unknown as { __texturas: typeof pintadas }).__texturas = pintadas;
   const grupo = new THREE.Group();
   const a = dadosDoContinente();
   const geo = new THREE.PlaneGeometry(
